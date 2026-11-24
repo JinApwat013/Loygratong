@@ -64,6 +64,7 @@ export default function App() {
   const [showLoveOverlay, setShowLoveOverlay] = useState(false);
   const [typingUid, setTypingUid] = useState<string | null>(null);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -203,6 +204,7 @@ export default function App() {
 
     let cancelled = false;
     setBootstrapping(true);
+    setSyncError(null);
 
     fetchRoomState(session.user)
       .then((state) => {
@@ -223,6 +225,11 @@ export default function App() {
           onMessage: handleWsMessage,
           onConnectionChange: setWsConnected,
         });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSyncError(err instanceof Error ? err.message : 'ไม่สามารถเชื่อมต่อ Firestore ได้');
+        setBootstrapping(false);
       });
 
     return () => {
@@ -259,7 +266,7 @@ export default function App() {
     setLogoutModalOpen(false);
     realtimeRef.current?.unsubscribe();
     realtimeRef.current = null;
-    logoutSession();
+    logoutSession(session?.user);
     partnerOnlineMapRef.current = {};
     setSession(null);
     setRoomState(null);
@@ -268,6 +275,7 @@ export default function App() {
     setTypingUid(null);
     setUnreadChatCount(0);
     setToast(null);
+    setSyncError(null);
   };
 
   const handleSaveDraft = async (payload: KrathongDraftPayload) => {
@@ -332,6 +340,24 @@ export default function App() {
 
   if (!session) {
     return <LoginPage onLogin={handleLoginWithName} />;
+  }
+
+  if (syncError && !roomState) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#070714] px-4 text-center">
+        <div className="max-w-md rounded-2xl border border-rose-400/30 bg-[#120b24] p-6">
+          <p className="text-sm font-medium text-rose-200">ไม่สามารถเชื่อมต่อฐานข้อมูล Firestore ได้</p>
+          <p className="mt-2 break-words text-xs text-slate-400">{syncError}</p>
+          <button
+            type="button"
+            onClick={handleConfirmLogout}
+            className="mt-4 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+          >
+            กลับไปหน้าเข้าสู่ระบบ
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (bootstrapping || !roomState) {
@@ -439,7 +465,7 @@ export default function App() {
                 </p>
               </div>
               <div className="font-mono-tabular text-xs text-slate-400">
-                ลอยแล้ว {floatingCount} / {Math.max(2, Object.keys(roomState.users).length)} ใบ
+                ลอยแล้ว {floatingCount} / {Math.max(2, floatingCount)} ใบ
               </div>
             </div>
 

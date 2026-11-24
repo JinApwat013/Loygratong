@@ -1,0 +1,210 @@
+{
+  "entities": {
+    "RoomUser": {
+      "title": "RoomUser",
+      "description": "A participant in the shared Our Little Universe room",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^OUR_LOVE_ROOM_001$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["MEMBER"]
+        },
+        "onlineStatus": {
+          "type": "boolean"
+        },
+        "isTyping": {
+          "type": "boolean"
+        },
+        "lastSeen": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64
+        }
+      },
+      "required": ["uid", "displayName", "roomId", "role", "onlineStatus", "lastSeen"]
+    },
+    "Krathong": {
+      "title": "Krathong",
+      "description": "A user's personalized 3D krathong in the shared room",
+      "type": "object",
+      "properties": {
+        "krathongId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^OUR_LOVE_ROOM_001$"
+        },
+        "design": {
+          "type": "string",
+          "enum": ["classic_lotus", "cosmic_crystal", "galaxy_leaf", "moon_boat"]
+        },
+        "flowerColor": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "candleColor": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "decoration": {
+          "type": "string",
+          "enum": ["mini_saturn", "floating_petals", "starlight_fireflies", "moon_pearls"]
+        },
+        "wishMessage": {
+          "type": "string",
+          "maxLength": 220
+        },
+        "showWish": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["DRAFT", "FLOATING"]
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "floatedAt": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "krathongId",
+        "ownerUid",
+        "ownerName",
+        "roomId",
+        "design",
+        "flowerColor",
+        "candleColor",
+        "decoration",
+        "wishMessage",
+        "showWish",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "A real-time chat message in the private room",
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^OUR_LOVE_ROOM_001$"
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64
+        }
+      },
+      "required": ["messageId", "roomId", "senderId", "senderName", "message", "createdAt"]
+    },
+    "RoomEvent": {
+      "title": "RoomEvent",
+      "description": "Shared love moment event triggered when 2+ krathongs float together",
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "pattern": "^OUR_LOVE_ROOM_001$"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": ["SHARED_LOVE_MOMENT"]
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64
+        }
+      },
+      "required": ["eventId", "roomId", "eventType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/krathongs/{krathongId}": {
+      "schema": { "$ref": "#/entities/Krathong" },
+      "description": "Shared collection storing krathongs of all users in room OUR_LOVE_ROOM_001"
+    },
+    "/room_users/{userDocId}": {
+      "schema": { "$ref": "#/entities/RoomUser" },
+      "description": "Active and remembered members of room OUR_LOVE_ROOM_001"
+    },
+    "/chat_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Real-time chat messages for room OUR_LOVE_ROOM_001"
+    },
+    "/room_events/{eventId}": {
+      "schema": { "$ref": "#/entities/RoomEvent" },
+      "description": "Shared Galaxy River milestone events for room OUR_LOVE_ROOM_001"
+    }
+  }
+}

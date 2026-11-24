@@ -1,4 +1,16 @@
 import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import {
   AuthSession,
   ChatMessage,
   Krathong,
@@ -7,12 +19,19 @@ import {
   KrathongStatus,
   PRIVATE_ROOM_ID,
   PRIVATE_ROOM_NAME,
+  RoomEvent,
   RoomState,
   RoomUser,
   UserRole,
-  WsClientMessage,
   WsServerMessage,
 } from '../types/universe';
+import {
+  db,
+  handleFirestoreError,
+  OperationType,
+  setActiveDiagnosticUserId,
+  testFirestoreConnection,
+} from './firebase';
 
 const TAB_SESSION_KEY = 'olu_tab_session_v2';
 const LS_ACTIVE_SESSION_KEY = 'olu_active_session_v1';
@@ -22,7 +41,11 @@ const LS_KRATHONG_PREFIX = 'olu_krathong_';
 const LS_EVENTS_KEY = `olu_events_${PRIVATE_ROOM_ID}`;
 const LS_CHAT_KEY = `olu_chat_messages_${PRIVATE_ROOM_ID}`;
 const LS_SEEN_EVENT_PREFIX = 'olu_seen_love_event_';
-const BROADCAST_CHANNEL_NAME = 'olu_universe_channel_v1';
+
+const KRATHONGS_COLLECTION = 'krathongs';
+const ROOM_USERS_COLLECTION = 'room_users';
+const CHAT_MESSAGES_COLLECTION = 'chat_messages';
+const ROOM_EVENTS_COLLECTION = 'room_events';
 
 export interface RememberedProfile {
   uid: string;
@@ -96,6 +119,7 @@ export function getSavedTabSession(): AuthSession | null {
     if (tabRaw) {
       const parsed = JSON.parse(tabRaw) as AuthSession;
       if (parsed?.user?.uid && parsed?.user?.displayName) {
+        setActiveDiagnosticUserId(parsed.user.uid);
         return parsed;
       }
     }
@@ -104,6 +128,7 @@ export function getSavedTabSession(): AuthSession | null {
       const parsed = JSON.parse(localRaw) as AuthSession;
       if (parsed?.user?.uid && parsed?.user?.displayName) {
         sessionStorage.setItem(TAB_SESSION_KEY, localRaw);
+        setActiveDiagnosticUserId(parsed.user.uid);
         return parsed;
       }
     }
@@ -115,6 +140,7 @@ export function getSavedTabSession(): AuthSession | null {
 
 export function saveTabSession(session: AuthSession): void {
   try {
+    setActiveDiagnosticUserId(session.user.uid);
     const encoded = JSON.stringify(session);
     sessionStorage.setItem(TAB_SESSION_KEY, encoded);
     localStorage.setItem(LS_ACTIVE_SESSION_KEY, encoded);
@@ -125,6 +151,7 @@ export function saveTabSession(session: AuthSession): void {
 
 export function clearTabSession(): void {
   try {
+    setActiveDiagnosticUserId(null);
     sessionStorage.removeItem(TAB_SESSION_KEY);
     localStorage.removeItem(LS_ACTIVE_SESSION_KEY);
   } catch {
@@ -159,71 +186,21 @@ export function loginWithName(displayName: string): AuthSession {
 
   saveTabSession(session);
   saveRememberedProfile(uid, trimmed);
-  upsertLocalRoomUser(user);
   return session;
 }
 
-export function logoutSession(): void {
+export function logoutSession(user?: RoomUser): void {
   clearTabSession();
-}
-
-function readLocalRoomState(seedUser?: RoomUser): RoomState {
-  const now = new Date().toISOString();
-  let state: RoomState = {
-    room: {
-      roomId: PRIVATE_ROOM_ID,
-      roomName: PRIVATE_ROOM_NAME,
-      memberUids: [],
-      createdAt: now,
-    },
-    users: {},
-    krathongs: {},
-    events: [],
-    messages: [],
-  };
-
-  try {
-    const raw = localStorage.getItem(LS_ROOM_STATE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as RoomState;
-      if (parsed?.room?.roomId === PRIVATE_ROOM_ID) {
-        state = {
-          room: {
-            roomId: PRIVATE_ROOM_ID,
-            roomName: PRIVATE_ROOM_NAME,
-            memberUids: Array.isArray(parsed.room.memberUids) ? parsed.room.memberUids : [],
-            createdAt: parsed.room.createdAt || now,
-          },
-          users: parsed.users ?? {},
-          krathongs: parsed.krathongs ?? {},
-          events: Array.isArray(parsed.events) ? parsed.events : [],
-          messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-        };
-      }
-    }
-  } catch {
-    // Fallback to empty state
+  if (user) {
+    const userDocId = `${PRIVATE_ROOM_ID}_${user.uid}`;
+    updateDoc(doc(db, ROOM_USERS_COLLECTION, userDocId), {
+      onlineStatus: false,
+      isTyping: false,
+      lastSeen: new Date().toISOString(),
+    }).catch(() => {
+      // Ignore background presence cleanup errors on logout
+    });
   }
-
-  if (seedUser) {
-    state.users[seedUser.uid] = {
-      ...state.users[seedUser.uid],
-      ...seedUser,
-      onlineStatus: true,
-      lastSeen: now,
-    };
-    if (!state.room.memberUids.includes(seedUser.uid)) {
-      state.room.memberUids.push(seedUser.uid);
-    }
-  }
-
-  return state;
-}
-
-function upsertLocalRoomUser(user: RoomUser): RoomState {
-  const state = readLocalRoomState(user);
-  mirrorStateToLocalStorage(state);
-  return state;
 }
 
 export function mirrorStateToLocalStorage(state: RoomState): void {
@@ -235,24 +212,6 @@ export function mirrorStateToLocalStorage(state: RoomState): void {
     localStorage.setItem(LS_EVENTS_KEY, JSON.stringify(state.events));
     if (Array.isArray(state.messages)) {
       localStorage.setItem(LS_CHAT_KEY, JSON.stringify(state.messages));
-    }
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
-export function appendChatMessageToLocalStorage(msg: ChatMessage): void {
-  try {
-    const raw = localStorage.getItem(LS_CHAT_KEY);
-    const list: ChatMessage[] = raw ? (JSON.parse(raw) as ChatMessage[]) : [];
-    if (!list.some((item) => item.messageId === msg.messageId)) {
-      list.push(msg);
-      localStorage.setItem(LS_CHAT_KEY, JSON.stringify(list.slice(-500)));
-    }
-    const state = readLocalRoomState();
-    if (!state.messages.some((item) => item.messageId === msg.messageId)) {
-      state.messages = [...state.messages, msg].slice(-500);
-      localStorage.setItem(LS_ROOM_STATE_KEY, JSON.stringify(state));
     }
   } catch {
     // Ignore storage quota errors
@@ -285,51 +244,140 @@ export function clearAllSeenLoveEvents(uids: string[]): void {
   }
 }
 
-function buildUserHeaders(user: RoomUser): Record<string, string> {
+function getKrathongDocId(uid: string): string {
+  return `${PRIVATE_ROOM_ID}_${uid}`;
+}
+
+function getRoomUserDocId(uid: string): string {
+  return `${PRIVATE_ROOM_ID}_${uid}`;
+}
+
+async function upsertRoomUser(
+  user: RoomUser,
+  onlineStatus: boolean,
+  isTyping = false,
+): Promise<void> {
+  const userDocId = getRoomUserDocId(user.uid);
+  const path = `${ROOM_USERS_COLLECTION}/${userDocId}`;
+  const ref = doc(db, ROOM_USERS_COLLECTION, userDocId);
+  const now = new Date().toISOString();
+
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        uid: user.uid,
+        displayName: user.displayName,
+        roomId: PRIVATE_ROOM_ID,
+        role: UserRole.MEMBER,
+        onlineStatus,
+        isTyping,
+        lastSeen: now,
+      });
+    } else {
+      await updateDoc(ref, {
+        displayName: user.displayName,
+        onlineStatus,
+        isTyping,
+        lastSeen: now,
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+function createEmptyRoomState(): RoomState {
   return {
-    'X-User-Id': user.uid,
-    'X-User-Name': encodeURIComponent(user.displayName),
+    room: {
+      roomId: PRIVATE_ROOM_ID,
+      roomName: PRIVATE_ROOM_NAME,
+      memberUids: [],
+      createdAt: new Date().toISOString(),
+    },
+    users: {},
+    krathongs: {},
+    events: [],
+    messages: [],
   };
 }
 
-/**
- * Safely parses JSON only if the server actually returned JSON.
- * Prevents "Unexpected token 'T', 'The page c'..." when an endpoint returns HTML or plain text.
- */
-async function safeParseJson<T>(res: Response): Promise<T | null> {
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.toLowerCase().includes('application/json')) {
-    return null;
-  }
-  try {
-    const text = await res.text();
-    const trimmed = text.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-      return null;
-    }
-    return JSON.parse(trimmed) as T;
-  } catch {
-    return null;
-  }
-}
-
 export async function fetchRoomState(user: RoomUser): Promise<RoomState> {
+  setActiveDiagnosticUserId(user.uid);
+  await testFirestoreConnection();
+  await upsertRoomUser(user, true, false);
+
+  const state = createEmptyRoomState();
+
+  // 1. Fetch all room members in OUR_LOVE_ROOM_001
   try {
-    const res = await fetch('/api/room', {
-      headers: buildUserHeaders(user),
-    });
-    if (res.ok) {
-      const serverState = await safeParseJson<RoomState>(res);
-      if (serverState?.room?.roomId === PRIVATE_ROOM_ID) {
-        mirrorStateToLocalStorage(serverState);
-        return serverState;
+    const usersSnap = await getDocs(
+      query(collection(db, ROOM_USERS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    usersSnap.forEach((docSnap) => {
+      const data = docSnap.data() as RoomUser;
+      if (data?.uid) {
+        state.users[data.uid] = {
+          uid: data.uid,
+          displayName: data.displayName,
+          role: UserRole.MEMBER,
+          onlineStatus: Boolean(data.onlineStatus),
+          lastSeen: data.lastSeen,
+        };
       }
-    }
-  } catch {
-    // Fallback cleanly to localStorage state when backend is unavailable
+    });
+    state.room.memberUids = Object.keys(state.users);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, ROOM_USERS_COLLECTION);
   }
 
-  return upsertLocalRoomUser(user);
+  // 2. Fetch ALL krathongs in OUR_LOVE_ROOM_001 (never filter by current user's ownerUid!)
+  try {
+    const krathongsSnap = await getDocs(
+      query(collection(db, KRATHONGS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    krathongsSnap.forEach((docSnap) => {
+      const k = docSnap.data() as Krathong;
+      if (k?.ownerUid) {
+        state.krathongs[k.ownerUid] = k;
+      }
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, KRATHONGS_COLLECTION);
+  }
+
+  // 3. Fetch chat messages in OUR_LOVE_ROOM_001
+  try {
+    const msgsSnap = await getDocs(
+      query(collection(db, CHAT_MESSAGES_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    const list: ChatMessage[] = [];
+    msgsSnap.forEach((docSnap) => {
+      list.push(docSnap.data() as ChatMessage);
+    });
+    list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    state.messages = list.slice(-500);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, CHAT_MESSAGES_COLLECTION);
+  }
+
+  // 4. Fetch room events in OUR_LOVE_ROOM_001
+  try {
+    const eventsSnap = await getDocs(
+      query(collection(db, ROOM_EVENTS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    const events: RoomEvent[] = [];
+    eventsSnap.forEach((docSnap) => {
+      events.push(docSnap.data() as RoomEvent);
+    });
+    events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    state.events = events;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, ROOM_EVENTS_COLLECTION);
+  }
+
+  mirrorStateToLocalStorage(state);
+  return state;
 }
 
 export async function updateMyDisplayName(
@@ -341,45 +389,53 @@ export async function updateMyDisplayName(
     throw new Error('กรุณากรอกชื่อก่อนบันทึก');
   }
 
-  try {
-    const res = await fetch('/api/auth/name', {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildUserHeaders(user),
-      },
-      body: JSON.stringify({ displayName: trimmed }),
-    });
-    if (res.ok) {
-      const data = await safeParseJson<{ user: RoomUser; state: RoomState }>(res);
-      if (data?.user && data?.state) {
-        saveTabSession({ token: data.user.uid, user: data.user });
-        saveRememberedProfile(data.user.uid, data.user.displayName);
-        mirrorStateToLocalStorage(data.state);
-        notifyLocalTabs({ type: 'ROOM_SYNC', payload: data.state });
-        return data;
-      }
-    }
-  } catch {
-    // Fallback to localStorage update
-  }
-
+  const now = new Date().toISOString();
   const updatedUser: RoomUser = {
     ...user,
     displayName: trimmed,
-    lastSeen: new Date().toISOString(),
+    lastSeen: now,
   };
-  const state = readLocalRoomState(updatedUser);
-  if (state.krathongs[user.uid]) {
-    state.krathongs[user.uid].ownerName = trimmed;
+
+  await upsertRoomUser(updatedUser, true, false);
+
+  // Update ownerName on user's krathong if it exists
+  const krathongDocId = getKrathongDocId(user.uid);
+  const krathongRef = doc(db, KRATHONGS_COLLECTION, krathongDocId);
+  try {
+    const kSnap = await getDoc(krathongRef);
+    if (kSnap.exists()) {
+      await updateDoc(krathongRef, {
+        ownerName: trimmed,
+        updatedAt: now,
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${KRATHONGS_COLLECTION}/${krathongDocId}`);
   }
-  state.messages = state.messages.map((m) =>
-    m.senderId === user.uid ? { ...m, senderName: trimmed } : m,
-  );
+
+  // Update senderName on user's past chat messages
+  try {
+    const msgsSnap = await getDocs(
+      query(
+        collection(db, CHAT_MESSAGES_COLLECTION),
+        where('roomId', '==', PRIVATE_ROOM_ID),
+        where('senderId', '==', user.uid),
+      ),
+    );
+    if (!msgsSnap.empty) {
+      const batch = writeBatch(db);
+      msgsSnap.forEach((docSnap) => {
+        batch.update(docSnap.ref, { senderName: trimmed });
+      });
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, CHAT_MESSAGES_COLLECTION);
+  }
+
   saveTabSession({ token: updatedUser.uid, user: updatedUser });
   saveRememberedProfile(updatedUser.uid, trimmed);
-  mirrorStateToLocalStorage(state);
-  notifyLocalTabs({ type: 'ROOM_SYNC', payload: state });
+  const state = await fetchRoomState(updatedUser);
   return { user: updatedUser, state };
 }
 
@@ -387,39 +443,27 @@ export async function saveMyKrathongDraft(
   user: RoomUser,
   payload: KrathongDraftPayload,
 ): Promise<{ krathong: Krathong; state: RoomState }> {
+  const krathongId = getKrathongDocId(user.uid);
+  const path = `${KRATHONGS_COLLECTION}/${krathongId}`;
+  const ref = doc(db, KRATHONGS_COLLECTION, krathongId);
+
+  let existing: Krathong | null = null;
   try {
-    const res = await fetch('/api/krathong', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildUserHeaders(user),
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await safeParseJson<{ krathong?: Krathong; state?: RoomState; error?: string }>(res);
-    if (!res.ok && data?.error) {
-      throw new Error(data.error);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      existing = snap.data() as Krathong;
     }
-    if (res.ok && data?.krathong && data?.state) {
-      mirrorStateToLocalStorage(data.state);
-      notifyLocalTabs({ type: 'ROOM_SYNC', payload: data.state });
-      return { krathong: data.krathong, state: data.state };
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('ลอยลงสู่แม่น้ำ')) {
-      throw err;
-    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
   }
 
-  // Local persistence fallback
-  const state = readLocalRoomState(user);
-  const existing = state.krathongs[user.uid];
   if (existing && existing.status === KrathongStatus.FLOATING) {
     throw new Error(`กระทงของ${user.displayName}ลอยลงสู่แม่น้ำกาแล็กซีแล้ว ไม่สามารถแก้ไขเพิ่มเติมได้`);
   }
+
   const now = new Date().toISOString();
   const krathong: Krathong = {
-    krathongId: existing?.krathongId ?? `krathong_${user.uid}_${Date.now().toString(36)}`,
+    krathongId,
     ownerUid: user.uid,
     ownerName: user.displayName,
     roomId: PRIVATE_ROOM_ID,
@@ -434,46 +478,86 @@ export async function saveMyKrathongDraft(
     updatedAt: now,
     floatedAt: null,
   };
-  state.krathongs[user.uid] = krathong;
-  mirrorStateToLocalStorage(state);
-  notifyLocalTabs({ type: 'ROOM_SYNC', payload: state });
+
+  try {
+    if (!existing) {
+      await setDoc(ref, krathong);
+    } else {
+      await updateDoc(ref, {
+        ownerName: krathong.ownerName,
+        design: krathong.design,
+        flowerColor: krathong.flowerColor,
+        candleColor: krathong.candleColor,
+        decoration: krathong.decoration,
+        wishMessage: krathong.wishMessage,
+        showWish: krathong.showWish,
+        status: KrathongStatus.DRAFT,
+        updatedAt: now,
+        floatedAt: null,
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, existing ? OperationType.UPDATE : OperationType.CREATE, path);
+  }
+
+  const state = await fetchRoomState(user);
   return { krathong, state };
+}
+
+async function ensureSharedLoveMomentIfBothFloated(): Promise<void> {
+  const krathongsSnap = await getDocs(
+    query(collection(db, KRATHONGS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+  );
+  let floatingCount = 0;
+  krathongsSnap.forEach((docSnap) => {
+    const data = docSnap.data() as Krathong;
+    if (data?.status === KrathongStatus.FLOATING) {
+      floatingCount++;
+    }
+  });
+
+  if (floatingCount >= 2) {
+    const eventId = `evt_love_${PRIVATE_ROOM_ID}`;
+    const eventRef = doc(db, ROOM_EVENTS_COLLECTION, eventId);
+    const existingEvent = await getDoc(eventRef);
+    if (!existingEvent.exists()) {
+      const eventDoc: RoomEvent = {
+        eventId,
+        roomId: PRIVATE_ROOM_ID,
+        eventType: 'SHARED_LOVE_MOMENT',
+        createdAt: new Date().toISOString(),
+      };
+      await setDoc(eventRef, eventDoc);
+    }
+  }
 }
 
 export async function floatMyKrathong(
   user: RoomUser,
   payload: KrathongDraftPayload,
 ): Promise<{ krathong: Krathong; state: RoomState }> {
+  const krathongId = getKrathongDocId(user.uid);
+  const path = `${KRATHONGS_COLLECTION}/${krathongId}`;
+  const ref = doc(db, KRATHONGS_COLLECTION, krathongId);
+
+  let existing: Krathong | null = null;
   try {
-    const res = await fetch('/api/krathong/float', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildUserHeaders(user),
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await safeParseJson<{ krathong?: Krathong; state?: RoomState; error?: string }>(res);
-    if (res.ok && data?.krathong && data?.state) {
-      mirrorStateToLocalStorage(data.state);
-      notifyLocalTabs({
-        type: 'KRATHONG_FLOATED',
-        payload: { krathong: data.krathong, state: data.state },
-      });
-      return { krathong: data.krathong, state: data.state };
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      existing = snap.data() as Krathong;
     }
-  } catch {
-    // Fallback cleanly to localStorage + BroadcastChannel
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
   }
 
-  const state = readLocalRoomState(user);
-  const existing = state.krathongs[user.uid];
   if (existing && existing.status === KrathongStatus.FLOATING) {
+    const state = await fetchRoomState(user);
     return { krathong: existing, state };
   }
+
   const now = new Date().toISOString();
   const krathong: Krathong = {
-    krathongId: existing?.krathongId ?? `krathong_${user.uid}_${Date.now().toString(36)}`,
+    krathongId,
     ownerUid: user.uid,
     ownerName: user.displayName,
     roomId: PRIVATE_ROOM_ID,
@@ -488,28 +572,35 @@ export async function floatMyKrathong(
     updatedAt: now,
     floatedAt: now,
   };
-  state.krathongs[user.uid] = krathong;
 
-  const floatingCount = Object.values(state.krathongs).filter(
-    (k) => k.status === KrathongStatus.FLOATING,
-  ).length;
-  if (
-    floatingCount >= 2 &&
-    !state.events.some((ev) => ev.eventType === 'SHARED_LOVE_MOMENT')
-  ) {
-    state.events.push({
-      eventId: `evt_love_${Date.now().toString(36)}`,
-      roomId: PRIVATE_ROOM_ID,
-      eventType: 'SHARED_LOVE_MOMENT',
-      createdAt: now,
-    });
+  try {
+    if (!existing) {
+      await setDoc(ref, krathong);
+    } else {
+      await updateDoc(ref, {
+        ownerName: krathong.ownerName,
+        design: krathong.design,
+        flowerColor: krathong.flowerColor,
+        candleColor: krathong.candleColor,
+        decoration: krathong.decoration,
+        wishMessage: krathong.wishMessage,
+        showWish: krathong.showWish,
+        status: KrathongStatus.FLOATING,
+        updatedAt: now,
+        floatedAt: now,
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, existing ? OperationType.UPDATE : OperationType.CREATE, path);
   }
 
-  mirrorStateToLocalStorage(state);
-  notifyLocalTabs({
-    type: 'KRATHONG_FLOATED',
-    payload: { krathong, state },
-  });
+  try {
+    await ensureSharedLoveMomentIfBothFloated();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, ROOM_EVENTS_COLLECTION);
+  }
+
+  const state = await fetchRoomState(user);
   return { krathong, state };
 }
 
@@ -518,27 +609,24 @@ export async function resetPrivateRoom(
   memberUids: string[],
 ): Promise<RoomState> {
   try {
-    const res = await fetch('/api/room/reset', {
-      method: 'POST',
-      headers: buildUserHeaders(user),
-    });
-    const data = await safeParseJson<{ state?: RoomState }>(res);
-    if (res.ok && data?.state) {
-      clearAllSeenLoveEvents(memberUids);
-      mirrorStateToLocalStorage(data.state);
-      notifyLocalTabs({ type: 'ROOM_RESET', payload: data.state });
-      return data.state;
-    }
-  } catch {
-    // Fallback to localStorage reset
+    const batch = writeBatch(db);
+    const krathongsSnap = await getDocs(
+      query(collection(db, KRATHONGS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    krathongsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+
+    const eventsSnap = await getDocs(
+      query(collection(db, ROOM_EVENTS_COLLECTION), where('roomId', '==', PRIVATE_ROOM_ID)),
+    );
+    eventsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, KRATHONGS_COLLECTION);
   }
 
-  const state = readLocalRoomState(user);
-  state.krathongs = {};
-  state.events = [];
   clearAllSeenLoveEvents(memberUids);
-  mirrorStateToLocalStorage(state);
-  notifyLocalTabs({ type: 'ROOM_RESET', payload: state });
+  const state = await fetchRoomState(user);
   return state;
 }
 
@@ -548,47 +636,24 @@ export async function sendChatMessage(user: RoomUser, message: string): Promise<
     throw new Error('กรุณาพิมพ์ข้อความก่อนส่ง');
   }
 
-  try {
-    const res = await fetch('/api/chat/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildUserHeaders(user),
-      },
-      body: JSON.stringify({ message: trimmed }),
-    });
-    const data = await safeParseJson<{ message?: ChatMessage; error?: string }>(res);
-    if (res.ok && data?.message) {
-      appendChatMessageToLocalStorage(data.message);
-      notifyLocalTabs({ type: 'CHAT_MESSAGE', payload: data.message });
-      return data.message;
-    }
-  } catch {
-    // Fallback cleanly to localStorage + BroadcastChannel
-  }
-
+  const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const chatMessage: ChatMessage = {
-    messageId: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    messageId,
     roomId: PRIVATE_ROOM_ID,
     senderId: user.uid,
     senderName: user.displayName,
     message: trimmed,
     createdAt: new Date().toISOString(),
   };
-  appendChatMessageToLocalStorage(chatMessage);
-  notifyLocalTabs({ type: 'CHAT_MESSAGE', payload: chatMessage });
-  return chatMessage;
-}
 
-function notifyLocalTabs(message: WsServerMessage): void {
-  if (typeof BroadcastChannel === 'undefined') return;
+  const path = `${CHAT_MESSAGES_COLLECTION}/${messageId}`;
   try {
-    const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
-    channel.postMessage(message);
-    channel.close();
-  } catch {
-    // Ignore BroadcastChannel errors
+    await setDoc(doc(db, CHAT_MESSAGES_COLLECTION, messageId), chatMessage);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
   }
+
+  return chatMessage;
 }
 
 export interface RealtimeSubscriptionHandlers {
@@ -606,97 +671,235 @@ export function subscribeRealtimeRoom(
   handlers: RealtimeSubscriptionHandlers,
 ): RealtimeSubscriptionHandle {
   let closed = false;
-  let socket: WebSocket | null = null;
-  let reconnectTimer: number | null = null;
-  let channel: BroadcastChannel | null = null;
 
-  if (typeof BroadcastChannel !== 'undefined') {
-    try {
-      channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
-      channel.onmessage = (event: MessageEvent<WsServerMessage>) => {
-        if (!closed && event.data) {
-          handlers.onMessage(event.data);
-        }
-      };
-    } catch {
-      channel = null;
-    }
-  }
+  const liveState: RoomState = createEmptyRoomState();
+  let prevFloatedIds = new Set<string>();
+  let prevMsgIds = new Set<string>();
+  let initializedMessages = false;
+  let initializedKrathongs = false;
 
-  const connect = () => {
+  const emitRoomSync = () => {
     if (closed) return;
-    try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws?uid=${encodeURIComponent(user.uid)}&name=${encodeURIComponent(user.displayName)}`;
-      socket = new WebSocket(wsUrl);
-
-      socket.onopen = () => {
-        if (!closed) {
-          handlers.onConnectionChange(true);
-        }
-      };
-
-      socket.onmessage = (event) => {
-        if (closed) return;
-        try {
-          const msg = JSON.parse(String(event.data)) as WsServerMessage;
-          if (msg.type === 'ROOM_SYNC' || msg.type === 'ROOM_RESET') {
-            mirrorStateToLocalStorage(msg.payload);
-          } else if (msg.type === 'KRATHONG_FLOATED') {
-            mirrorStateToLocalStorage(msg.payload.state);
-          } else if (msg.type === 'CHAT_MESSAGE') {
-            appendChatMessageToLocalStorage(msg.payload);
-          }
-          handlers.onMessage(msg);
-        } catch {
-          // Ignore malformed packets
-        }
-      };
-
-      socket.onclose = () => {
-        if (closed) return;
-        handlers.onConnectionChange(false);
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
-
-      socket.onerror = () => {
-        socket?.close();
-      };
-    } catch {
-      handlers.onConnectionChange(false);
-    }
+    const cloned: RoomState = {
+      room: { ...liveState.room, memberUids: [...liveState.room.memberUids] },
+      users: { ...liveState.users },
+      krathongs: { ...liveState.krathongs },
+      events: [...liveState.events],
+      messages: [...liveState.messages],
+    };
+    mirrorStateToLocalStorage(cloned);
+    handlers.onMessage({ type: 'ROOM_SYNC', payload: cloned });
   };
 
-  connect();
+  // Mark online immediately in Firestore
+  upsertRoomUser(user, true, false).catch(() => {
+    // Error handled inside upsertRoomUser
+  });
+  handlers.onConnectionChange(true);
+
+  const handlePageUnload = () => {
+    const userDocId = getRoomUserDocId(user.uid);
+    updateDoc(doc(db, ROOM_USERS_COLLECTION, userDocId), {
+      onlineStatus: false,
+      isTyping: false,
+      lastSeen: new Date().toISOString(),
+    }).catch(() => {});
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', handlePageUnload);
+  }
+
+  // 1. Real-time onSnapshot for ALL krathongs in OUR_LOVE_ROOM_001 (never filtered by ownerUid)
+  const krathongsQuery = query(
+    collection(db, KRATHONGS_COLLECTION),
+    where('roomId', '==', PRIVATE_ROOM_ID),
+  );
+  const unsubKrathongs = onSnapshot(
+    krathongsQuery,
+    (snapshot) => {
+      if (closed) return;
+      handlers.onConnectionChange(true);
+
+      const nextKrathongs: Record<string, Krathong> = {};
+      const nextFloatedIds = new Set<string>();
+      const newlyFloated: Krathong[] = [];
+
+      snapshot.forEach((docSnap) => {
+        const k = docSnap.data() as Krathong;
+        if (k?.ownerUid) {
+          nextKrathongs[k.ownerUid] = k;
+          if (k.status === KrathongStatus.FLOATING) {
+            nextFloatedIds.add(k.krathongId);
+            if (initializedKrathongs && !prevFloatedIds.has(k.krathongId)) {
+              newlyFloated.push(k);
+            }
+          }
+        }
+      });
+
+      const wasNonEmpty = Object.keys(liveState.krathongs).length > 0;
+      liveState.krathongs = nextKrathongs;
+      prevFloatedIds = nextFloatedIds;
+      initializedKrathongs = true;
+
+      emitRoomSync();
+
+      for (const k of newlyFloated) {
+        handlers.onMessage({
+          type: 'KRATHONG_FLOATED',
+          payload: {
+            krathong: k,
+            state: {
+              ...liveState,
+              users: { ...liveState.users },
+              krathongs: { ...liveState.krathongs },
+              events: [...liveState.events],
+              messages: [...liveState.messages],
+            },
+          },
+        });
+      }
+
+      if (wasNonEmpty && Object.keys(nextKrathongs).length === 0) {
+        handlers.onMessage({
+          type: 'ROOM_RESET',
+          payload: {
+            ...liveState,
+            users: { ...liveState.users },
+            krathongs: {},
+            events: [],
+            messages: [...liveState.messages],
+          },
+        });
+      }
+    },
+    (error) => {
+      handlers.onConnectionChange(false);
+      handleFirestoreError(error, OperationType.LIST, KRATHONGS_COLLECTION);
+    },
+  );
+
+  // 2. Real-time onSnapshot for room users (presence + typing + display names)
+  const usersQuery = query(
+    collection(db, ROOM_USERS_COLLECTION),
+    where('roomId', '==', PRIVATE_ROOM_ID),
+  );
+  const unsubUsers = onSnapshot(
+    usersQuery,
+    (snapshot) => {
+      if (closed) return;
+      const nextUsers: Record<string, RoomUser> = {};
+      snapshot.forEach((docSnap) => {
+        const raw = docSnap.data() as RoomUser & { isTyping?: boolean };
+        if (raw?.uid) {
+          nextUsers[raw.uid] = {
+            uid: raw.uid,
+            displayName: raw.displayName,
+            role: UserRole.MEMBER,
+            onlineStatus: Boolean(raw.onlineStatus),
+            lastSeen: raw.lastSeen,
+          };
+          if (raw.uid !== user.uid) {
+            handlers.onMessage({
+              type: 'TYPING_STATUS',
+              payload: { uid: raw.uid, isTyping: Boolean(raw.isTyping) },
+            });
+          }
+        }
+      });
+
+      liveState.users = nextUsers;
+      liveState.room.memberUids = Object.keys(nextUsers);
+      mirrorStateToLocalStorage(liveState);
+      handlers.onMessage({ type: 'PRESENCE_UPDATE', payload: nextUsers });
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, ROOM_USERS_COLLECTION);
+    },
+  );
+
+  // 3. Real-time onSnapshot for chat messages in OUR_LOVE_ROOM_001
+  const messagesQuery = query(
+    collection(db, CHAT_MESSAGES_COLLECTION),
+    where('roomId', '==', PRIVATE_ROOM_ID),
+  );
+  const unsubMessages = onSnapshot(
+    messagesQuery,
+    (snapshot) => {
+      if (closed) return;
+      const list: ChatMessage[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as ChatMessage);
+      });
+      list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const trimmedList = list.slice(-500);
+
+      const newMessages: ChatMessage[] = [];
+      const nextMsgIds = new Set<string>();
+      for (const m of trimmedList) {
+        nextMsgIds.add(m.messageId);
+        if (initializedMessages && !prevMsgIds.has(m.messageId)) {
+          newMessages.push(m);
+        }
+      }
+
+      liveState.messages = trimmedList;
+      prevMsgIds = nextMsgIds;
+      initializedMessages = true;
+
+      emitRoomSync();
+      for (const m of newMessages) {
+        handlers.onMessage({ type: 'CHAT_MESSAGE', payload: m });
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, CHAT_MESSAGES_COLLECTION);
+    },
+  );
+
+  // 4. Real-time onSnapshot for room events (SHARED_LOVE_MOMENT)
+  const eventsQuery = query(
+    collection(db, ROOM_EVENTS_COLLECTION),
+    where('roomId', '==', PRIVATE_ROOM_ID),
+  );
+  const unsubEvents = onSnapshot(
+    eventsQuery,
+    (snapshot) => {
+      if (closed) return;
+      const events: RoomEvent[] = [];
+      snapshot.forEach((docSnap) => {
+        events.push(docSnap.data() as RoomEvent);
+      });
+      events.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      liveState.events = events;
+      emitRoomSync();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, ROOM_EVENTS_COLLECTION);
+    },
+  );
 
   const sendTyping = (uid: string, isTyping: boolean) => {
     if (closed) return;
-    const payload: WsClientMessage = {
-      type: 'TYPING',
-      payload: { isTyping },
-    };
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(payload));
-    }
-    notifyLocalTabs({
-      type: 'TYPING_STATUS',
-      payload: { uid, isTyping },
+    const userDocId = getRoomUserDocId(uid);
+    updateDoc(doc(db, ROOM_USERS_COLLECTION, userDocId), {
+      isTyping,
+      lastSeen: new Date().toISOString(),
+    }).catch(() => {
+      // Ignore typing update transient errors
     });
   };
 
   const unsubscribe = () => {
     closed = true;
     handlers.onConnectionChange(false);
-    if (reconnectTimer !== null) {
-      window.clearTimeout(reconnectTimer);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pagehide', handlePageUnload);
     }
-    if (socket) {
-      socket.onclose = null;
-      socket.close();
-    }
-    if (channel) {
-      channel.close();
-    }
+    unsubKrathongs();
+    unsubUsers();
+    unsubMessages();
+    unsubEvents();
   };
 
   return { unsubscribe, sendTyping };

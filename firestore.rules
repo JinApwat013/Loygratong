@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSharedRoom(roomId) {
+      return roomId is string && roomId == 'OUR_LOVE_ROOM_001';
+    }
+
+    function isValidRoomUser(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'roomId', 'role', 'onlineStatus', 'lastSeen'])
+        && data.keys().hasOnly(['uid', 'displayName', 'roomId', 'role', 'onlineStatus', 'isTyping', 'lastSeen'])
+        && isValidId(data.uid)
+        && data.uid.size() <= 64
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && isSharedRoom(data.roomId)
+        && data.role == 'MEMBER'
+        && data.onlineStatus is bool
+        && (!('isTyping' in data) || data.isTyping is bool)
+        && data.lastSeen is string
+        && data.lastSeen.size() >= 10
+        && data.lastSeen.size() <= 64;
+    }
+
+    function isValidKrathong(data) {
+      return data.keys().hasAll([
+          'krathongId',
+          'ownerUid',
+          'ownerName',
+          'roomId',
+          'design',
+          'flowerColor',
+          'candleColor',
+          'decoration',
+          'wishMessage',
+          'showWish',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'krathongId',
+          'ownerUid',
+          'ownerName',
+          'roomId',
+          'design',
+          'flowerColor',
+          'candleColor',
+          'decoration',
+          'wishMessage',
+          'showWish',
+          'status',
+          'createdAt',
+          'updatedAt',
+          'floatedAt'
+        ])
+        && isValidId(data.krathongId)
+        && isValidId(data.ownerUid)
+        && data.ownerUid.size() <= 64
+        && data.ownerName is string
+        && data.ownerName.size() >= 1
+        && data.ownerName.size() <= 40
+        && isSharedRoom(data.roomId)
+        && data.design in ['classic_lotus', 'cosmic_crystal', 'galaxy_leaf', 'moon_boat']
+        && data.flowerColor is string
+        && data.flowerColor.matches('^#[0-9a-fA-F]{6}$')
+        && data.candleColor is string
+        && data.candleColor.matches('^#[0-9a-fA-F]{6}$')
+        && data.decoration in ['mini_saturn', 'floating_petals', 'starlight_fireflies', 'moon_pearls']
+        && data.wishMessage is string
+        && data.wishMessage.size() <= 220
+        && data.showWish is bool
+        && data.status in ['DRAFT', 'FLOATING']
+        && data.createdAt is string
+        && data.createdAt.size() >= 10
+        && data.createdAt.size() <= 64
+        && data.updatedAt is string
+        && data.updatedAt.size() >= 10
+        && data.updatedAt.size() <= 64
+        && (!('floatedAt' in data) || data.floatedAt == null || (data.floatedAt is string && data.floatedAt.size() <= 64));
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['messageId', 'roomId', 'senderId', 'senderName', 'message', 'createdAt'])
+        && data.keys().hasOnly(['messageId', 'roomId', 'senderId', 'senderName', 'message', 'createdAt'])
+        && isValidId(data.messageId)
+        && isSharedRoom(data.roomId)
+        && isValidId(data.senderId)
+        && data.senderId.size() <= 64
+        && data.senderName is string
+        && data.senderName.size() >= 1
+        && data.senderName.size() <= 40
+        && data.message is string
+        && data.message.size() >= 1
+        && data.message.size() <= 1000
+        && data.createdAt is string
+        && data.createdAt.size() >= 10
+        && data.createdAt.size() <= 64;
+    }
+
+    function isValidRoomEvent(data) {
+      return data.keys().hasAll(['eventId', 'roomId', 'eventType', 'createdAt'])
+        && data.keys().hasOnly(['eventId', 'roomId', 'eventType', 'createdAt'])
+        && isValidId(data.eventId)
+        && isSharedRoom(data.roomId)
+        && data.eventType == 'SHARED_LOVE_MOMENT'
+        && data.createdAt is string
+        && data.createdAt.size() >= 10
+        && data.createdAt.size() <= 64;
+    }
+
+    // Connection healthcheck document
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Shared Krathongs collection: members in OUR_LOVE_ROOM_001 can read all krathongs in the room
+    match /krathongs/{krathongId} {
+      allow get: if isValidId(krathongId) && (resource == null || isSharedRoom(existing().roomId));
+      allow list: if isSharedRoom(existing().roomId);
+      allow create: if isValidId(krathongId)
+        && isValidKrathong(incoming())
+        && incoming().krathongId == krathongId;
+      allow update: if isValidId(krathongId)
+        && isValidKrathong(incoming())
+        && incoming().krathongId == existing().krathongId
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().roomId == existing().roomId
+        && incoming().createdAt == existing().createdAt
+        && (
+          // Normal draft/float transition when not yet FLOATING
+          (existing().status == 'DRAFT' && incoming().diff(existing()).affectedKeys().hasOnly([
+            'ownerName', 'design', 'flowerColor', 'candleColor', 'decoration',
+            'wishMessage', 'showWish', 'status', 'updatedAt', 'floatedAt'
+          ]))
+          ||
+          // Only allow renaming ownerName after already FLOATING
+          (existing().status == 'FLOATING' && incoming().status == 'FLOATING'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'updatedAt']))
+        );
+      allow delete: if isValidId(krathongId) && isSharedRoom(existing().roomId);
+    }
+
+    // Room participants (presence + typing + display name)
+    match /room_users/{userDocId} {
+      allow get: if isValidId(userDocId) && (resource == null || isSharedRoom(existing().roomId));
+      allow list: if isSharedRoom(existing().roomId);
+      allow create: if isValidId(userDocId) && isValidRoomUser(incoming());
+      allow update: if isValidId(userDocId)
+        && isValidRoomUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().roomId == existing().roomId
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'onlineStatus', 'isTyping', 'lastSeen'
+        ]);
+      allow delete: if isValidId(userDocId) && isSharedRoom(existing().roomId);
+    }
+
+    // Live chat messages
+    match /chat_messages/{messageId} {
+      allow get: if isValidId(messageId) && (resource == null || isSharedRoom(existing().roomId));
+      allow list: if isSharedRoom(existing().roomId);
+      allow create: if isValidId(messageId)
+        && isValidChatMessage(incoming())
+        && incoming().messageId == messageId;
+      allow update: if isValidId(messageId)
+        && isValidChatMessage(incoming())
+        && incoming().messageId == existing().messageId
+        && incoming().roomId == existing().roomId
+        && incoming().senderId == existing().senderId
+        && incoming().message == existing().message
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['senderName']);
+    }
+
+    // Shared love moment events
+    match /room_events/{eventId} {
+      allow get: if isValidId(eventId) && (resource == null || isSharedRoom(existing().roomId));
+      allow list: if isSharedRoom(existing().roomId);
+      allow create: if isValidId(eventId)
+        && isValidRoomEvent(incoming())
+        && incoming().eventId == eventId;
+      allow delete: if isValidId(eventId) && isSharedRoom(existing().roomId);
+    }
+  }
+}

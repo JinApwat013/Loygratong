@@ -284,7 +284,7 @@ export function DashboardView({
               {floatedCount}
             </span>
             <span className="font-mono-tabular text-sm text-slate-400">
-              / {Math.max(2, Object.keys(roomState.users).length)} ใบ
+              / {Math.max(2, floatedCount)} ใบ
             </span>
           </div>
           <div className="mt-2 flex items-center gap-1.5 text-xs">
