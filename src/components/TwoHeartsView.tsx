@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Flame, Heart, RotateCcw, Star } from 'lucide-react';
+import { Flame, Heart, RotateCcw, Star, UserPlus } from 'lucide-react';
 import { DESIGN_OPTIONS, KrathongStatus, RoomState, RoomUser } from '../types/universe';
 
 interface TwoHeartsViewProps {
   currentUser: RoomUser;
+  partnerUser: RoomUser | undefined;
   roomState: RoomState;
   onResetRoom: () => Promise<void>;
 }
@@ -20,11 +21,20 @@ function formatDateTime(iso: string | null | undefined): string {
   }
 }
 
-export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHeartsViewProps) {
+export function TwoHeartsView({
+  currentUser,
+  partnerUser,
+  roomState,
+  onResetRoom,
+}: TwoHeartsViewProps) {
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const memberOrder: Array<'user_001' | 'user_002'> = ['user_001', 'user_002'];
+  const otherUsers = Object.values(roomState.users)
+    .filter((u) => u.uid !== currentUser.uid)
+    .sort((a, b) => Number(b.onlineStatus) - Number(a.onlineStatus) || b.lastSeen.localeCompare(a.lastSeen));
+
+  const orderedUsers: RoomUser[] = [currentUser, ...otherUsers];
 
   const handleConfirmReset = async () => {
     setResetting(true);
@@ -41,10 +51,12 @@ export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHearts
       <div className="mb-8">
         <p className="text-xs text-violet-300">TWO HEARTS · สถานะแบบเรียลไทม์</p>
         <h1 className="font-display mt-1 text-2xl font-semibold text-white sm:text-3xl">
-          สถานะของเราสองคนในคืนนี้
+          {partnerUser
+            ? `สถานะของ ${currentUser.displayName} และ ${partnerUser.displayName} ในคืนนี้`
+            : `สถานะของ ${currentUser.displayName} ในคืนนี้`}
         </h1>
         <p className="mt-1.5 text-sm text-slate-400">
-          อัปเดตสถานะการออนไลน์และการลอยกระทงของทั้งสองบัญชีทันทีที่มีการเปลี่ยนแปลง
+          อัปเดตสถานะการออนไลน์และการลอยกระทงของแต่ละคนทันทีที่มีการเปลี่ยนแปลง
         </p>
       </div>
 
@@ -68,12 +80,11 @@ export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHearts
         </span>
       </div>
 
-      {/* Two Member Cards */}
+      {/* Member Cards */}
       <div className="grid gap-6 md:grid-cols-2">
-        {memberOrder.map((uid) => {
-          const user = roomState.users[uid];
-          const krathong = roomState.krathongs[uid];
-          const isMe = currentUser.uid === uid;
+        {orderedUsers.map((user) => {
+          const krathong = roomState.krathongs[user.uid];
+          const isMe = currentUser.uid === user.uid;
           const isFloated = krathong?.status === KrathongStatus.FLOATING;
           const designLabel = krathong
             ? DESIGN_OPTIONS.find((d) => d.id === krathong.design)?.label ?? '-'
@@ -81,13 +92,13 @@ export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHearts
 
           return (
             <section
-              key={uid}
+              key={user.uid}
               className="rounded-2xl border border-white/10 bg-[#0d0a22]/90 p-6"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="font-mono-tabular text-xs text-slate-400">
-                    {user.uid} · {isMe ? 'บัญชีที่เข้าสู่ระบบอยู่' : 'คู่ของเรา'}
+                    {user.uid} · {isMe ? `กำลังใช้งาน (${user.displayName})` : `เพื่อนร่วมห้อง (${user.displayName})`}
                   </p>
                   <h2 className="font-display mt-1 text-2xl font-semibold text-white">
                     {user.displayName}
@@ -152,6 +163,20 @@ export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHearts
             </section>
           );
         })}
+
+        {orderedUsers.length < 2 && (
+          <section className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-[#0d0a22]/50 p-6 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-violet-400/25 bg-violet-500/10">
+              <UserPlus className="h-5 w-5 text-violet-300" />
+            </div>
+            <h2 className="font-display mt-4 text-xl font-semibold text-white">
+              รออีกคนกรอกชื่อเข้าสู่จักรวาล
+            </h2>
+            <p className="mt-2 max-w-xs text-xs leading-relaxed text-slate-400">
+              เมื่ออีกคนเปิดหน้าเว็บและกรอกชื่อเข้ามา ชื่อและสถานะกระทงจะปรากฏที่นี่แบบเรียลไทม์
+            </p>
+          </section>
+        )}
       </div>
 
       {/* Room Reset Action for Re-testing */}
@@ -160,7 +185,7 @@ export function TwoHeartsView({ currentUser, roomState, onResetRoom }: TwoHearts
           <div>
             <h3 className="text-sm font-semibold text-white">เริ่มลอยกระทงรอบใหม่สำหรับห้องนี้</h3>
             <p className="mt-1 text-xs text-slate-400">
-              ใช้เมื่อต้องการล้างกระทงของทั้งสองคนในรอบปัจจุบัน เพื่อทดสอบการสร้างและลอยกระทงพร้อมกันใหม่อีกครั้ง
+              ใช้เมื่อต้องการล้างกระทงในรอบปัจจุบัน เพื่อทดสอบการสร้างและลอยกระทงพร้อมกันใหม่อีกครั้ง
             </p>
           </div>
           {!confirmReset ? (

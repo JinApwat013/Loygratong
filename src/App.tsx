@@ -16,14 +16,15 @@ import {
   getSavedTabSession,
   hasSeenLoveEvent,
   KrathongDraftPayload,
+  loginWithName,
   logoutSession,
   markLoveEventSeen,
   RealtimeSubscriptionHandle,
   resetPrivateRoom,
   saveMyKrathongDraft,
-  selectProfileLogin,
   sendChatMessage,
   subscribeRealtimeRoom,
+  updateMyDisplayName,
 } from './services/roomClient';
 import { GalaxyRiverCanvas } from './three/GalaxyRiverCanvas';
 import {
@@ -31,6 +32,7 @@ import {
   AuthSession,
   KrathongStatus,
   RoomState,
+  RoomUser,
   WsServerMessage,
 } from './types/universe';
 
@@ -38,6 +40,18 @@ interface ToastBanner {
   id: string;
   message: string;
   targetView: AppView;
+}
+
+function resolvePartnerUser(
+  users: Record<string, RoomUser>,
+  currentUid: string,
+): RoomUser | undefined {
+  const others = Object.values(users).filter((u) => u.uid !== currentUid);
+  if (others.length === 0) return undefined;
+  others.sort(
+    (a, b) => Number(b.onlineStatus) - Number(a.onlineStatus) || b.lastSeen.localeCompare(a.lastSeen),
+  );
+  return others[0];
 }
 
 export default function App() {
@@ -49,7 +63,7 @@ export default function App() {
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
   const [toast, setToast] = useState<ToastBanner | null>(null);
   const [showLoveOverlay, setShowLoveOverlay] = useState(false);
-  const [partnerTyping, setPartnerTyping] = useState(false);
+  const [typingUid, setTypingUid] = useState<string | null>(null);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   const sessionRef = useRef(session);
@@ -59,7 +73,7 @@ export default function App() {
   const realtimeRef = useRef<RealtimeSubscriptionHandle | null>(null);
   const lastFloatedNotifiedRef = useRef<string | null>(null);
   const lastChatNotifiedRef = useRef<string | null>(null);
-  const partnerOnlineRef = useRef<boolean | null>(null);
+  const partnerOnlineMapRef = useRef<Record<string, boolean>>({});
 
   const navigateTo = useCallback((nextView: AppView) => {
     setActiveView(nextView);
@@ -69,11 +83,11 @@ export default function App() {
   }, []);
 
   const checkAndTriggerSharedLove = useCallback(
-    (nextState: RoomState, uid: 'user_001' | 'user_002') => {
-      const k1 = nextState.krathongs.user_001;
-      const k2 = nextState.krathongs.user_002;
-      const bothFloating =
-        k1?.status === KrathongStatus.FLOATING && k2?.status === KrathongStatus.FLOATING;
+    (nextState: RoomState, uid: string) => {
+      const floatingCount = Object.values(nextState.krathongs).filter(
+        (k) => k?.status === KrathongStatus.FLOATING,
+      ).length;
+      const bothFloating = floatingCount >= 2;
 
       const latestEvent = nextState.events.find(
         (ev) => ev.eventType === 'SHARED_LOVE_MOMENT',
@@ -92,10 +106,15 @@ export default function App() {
     (msg: WsServerMessage) => {
       const currentUid = sessionRef.current?.user.uid;
       if (!currentUid) return;
-      const partnerUid = currentUid === 'user_001' ? 'user_002' : 'user_001';
 
       if (msg.type === 'ROOM_SYNC') {
-        partnerOnlineRef.current = msg.payload.users[partnerUid].onlineStatus;
+        const nextMap: Record<string, boolean> = {};
+        for (const u of Object.values(msg.payload.users)) {
+          if (u.uid !== currentUid) {
+            nextMap[u.uid] = u.onlineStatus;
+          }
+        }
+        partnerOnlineMapRef.current = nextMap;
         setRoomState(msg.payload);
         checkAndTriggerSharedLove(msg.payload, currentUid);
       } else if (msg.type === 'ROOM_RESET') {
@@ -103,20 +122,25 @@ export default function App() {
         setShowLoveOverlay(false);
         lastFloatedNotifiedRef.current = null;
       } else if (msg.type === 'PRESENCE_UPDATE') {
-        const nextOnline = msg.payload[partnerUid].onlineStatus;
-        const partnerName = msg.payload[partnerUid].displayName;
-        if (partnerOnlineRef.current === false && nextOnline === true) {
-          setToast({
-            id: `presence_${Date.now()}`,
-            message: `${partnerName}มาแล้ว ❤️`,
-            targetView: 'dashboard',
-          });
+        const nextMap: Record<string, boolean> = {};
+        for (const u of Object.values(msg.payload)) {
+          if (u.uid !== currentUid) {
+            const wasOnline = partnerOnlineMapRef.current[u.uid];
+            if ((wasOnline === false || wasOnline === undefined) && u.onlineStatus === true) {
+              setToast({
+                id: `presence_${u.uid}_${Date.now()}`,
+                message: `${u.displayName}มาแล้ว ❤️`,
+                targetView: 'dashboard',
+              });
+            }
+            nextMap[u.uid] = u.onlineStatus;
+          }
         }
-        partnerOnlineRef.current = nextOnline;
+        partnerOnlineMapRef.current = nextMap;
         setRoomState((prev) => (prev ? { ...prev, users: msg.payload } : prev));
       } else if (msg.type === 'TYPING_STATUS') {
         if (msg.payload.uid !== currentUid) {
-          setPartnerTyping(msg.payload.isTyping);
+          setTypingUid(msg.payload.isTyping ? msg.payload.uid : null);
         }
       } else if (msg.type === 'CHAT_MESSAGE') {
         const incomingMsg = msg.payload;
@@ -135,7 +159,7 @@ export default function App() {
           lastChatNotifiedRef.current !== incomingMsg.messageId
         ) {
           lastChatNotifiedRef.current = incomingMsg.messageId;
-          setPartnerTyping(false);
+          setTypingUid((prev) => (prev === incomingMsg.senderId ? null : prev));
           if (activeViewRef.current !== 'chat') {
             setUnreadChatCount((c) => c + 1);
             const preview =
@@ -184,6 +208,13 @@ export default function App() {
     fetchRoomState(session.token)
       .then((state) => {
         if (cancelled) return;
+        const initPresence: Record<string, boolean> = {};
+        for (const u of Object.values(state.users)) {
+          if (u.uid !== session.user.uid) {
+            initPresence[u.uid] = u.onlineStatus;
+          }
+        }
+        partnerOnlineMapRef.current = initPresence;
         setRoomState(state);
         checkAndTriggerSharedLove(state, session.user.uid);
         setBootstrapping(false);
@@ -216,13 +247,20 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const handleSelectProfile = async (uid: 'user_001' | 'user_002') => {
-    const newSession = await selectProfileLogin(uid);
-    partnerOnlineRef.current = null;
+  const handleLoginWithName = async (displayName: string) => {
+    const newSession = await loginWithName(displayName);
+    partnerOnlineMapRef.current = {};
     setUnreadChatCount(0);
-    setPartnerTyping(false);
+    setTypingUid(null);
     setActiveView('dashboard');
     setSession(newSession);
+  };
+
+  const handleRename = async (nextName: string) => {
+    if (!session) return;
+    const { user, state } = await updateMyDisplayName(session.token, nextName);
+    setSession((prev) => (prev ? { ...prev, user } : prev));
+    setRoomState(state);
   };
 
   const handleConfirmLogout = async () => {
@@ -232,12 +270,12 @@ export default function App() {
     if (session) {
       await logoutSession(session.token);
     }
-    partnerOnlineRef.current = null;
+    partnerOnlineMapRef.current = {};
     setSession(null);
     setRoomState(null);
     setWsConnected(false);
     setShowLoveOverlay(false);
-    setPartnerTyping(false);
+    setTypingUid(null);
     setUnreadChatCount(0);
     setToast(null);
   };
@@ -257,8 +295,8 @@ export default function App() {
   };
 
   const handleResetRoom = async () => {
-    if (!session) return;
-    const nextState = await resetPrivateRoom(session.token);
+    if (!session || !roomState) return;
+    const nextState = await resetPrivateRoom(session.token, Object.keys(roomState.users));
     setRoomState(nextState);
     setShowLoveOverlay(false);
     lastFloatedNotifiedRef.current = null;
@@ -290,13 +328,12 @@ export default function App() {
     );
   }, [roomState]);
 
-  const bothFloating = useMemo(() => {
-    if (!roomState) return false;
-    return (
-      roomState.krathongs.user_001?.status === KrathongStatus.FLOATING &&
-      roomState.krathongs.user_002?.status === KrathongStatus.FLOATING
-    );
-  }, [roomState]);
+  const floatingCount = useMemo(
+    () => allKrathongsList.filter((k) => k.status === KrathongStatus.FLOATING).length,
+    [allKrathongsList],
+  );
+
+  const bothFloating = floatingCount >= 2;
 
   const hasSharedLoveEvent = useMemo(() => {
     if (!roomState) return false;
@@ -304,7 +341,7 @@ export default function App() {
   }, [roomState]);
 
   if (!session) {
-    return <LoginPage onSelectProfile={handleSelectProfile} />;
+    return <LoginPage onLogin={handleLoginWithName} />;
   }
 
   if (bootstrapping || !roomState) {
@@ -317,9 +354,9 @@ export default function App() {
   }
 
   const currentUser = roomState.users[session.user.uid] ?? session.user;
-  const partnerUid = session.user.uid === 'user_001' ? 'user_002' : 'user_001';
-  const partnerUser = roomState.users[partnerUid];
-  const myKrathong = roomState.krathongs[session.user.uid];
+  const partnerUser = resolvePartnerUser(roomState.users, currentUser.uid);
+  const myKrathong = roomState.krathongs[currentUser.uid];
+  const typingUserName = typingUid ? roomState.users[typingUid]?.displayName ?? null : null;
 
   return (
     <div className="min-h-screen bg-[#070714] text-slate-100">
@@ -330,7 +367,7 @@ export default function App() {
         onRequestLogout={() => setLogoutModalOpen(true)}
       />
 
-      {/* Real-time Notification Toast when partner floats krathong or sends chat */}
+      {/* Real-time Notification Toast when partner arrives, floats krathong, or sends chat */}
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -379,10 +416,12 @@ export default function App() {
         {activeView === 'dashboard' && (
           <DashboardView
             currentUser={currentUser}
+            partnerUser={partnerUser}
             roomState={roomState}
             wsConnected={wsConnected}
             unreadChatCount={unreadChatCount}
             onNavigate={navigateTo}
+            onRename={handleRename}
           />
         )}
 
@@ -401,15 +440,16 @@ export default function App() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
-                  แม่น้ำกาแล็กซีของเราสองคน
+                  {partnerUser
+                    ? `แม่น้ำกาแล็กซีของ ${currentUser.displayName} และ ${partnerUser.displayName}`
+                    : `แม่น้ำกาแล็กซีของ ${currentUser.displayName}`}
                 </h1>
                 <p className="text-xs text-slate-400">
                   พื้นที่แม่น้ำส่วนกลาง · แสดงเฉพาะกระทงที่ลอยแล้วแบบเรียลไทม์
                 </p>
               </div>
               <div className="font-mono-tabular text-xs text-slate-400">
-                ลอยแล้ว {allKrathongsList.filter((k) => k.status === KrathongStatus.FLOATING).length}{' '}
-                / 2 ใบ
+                ลอยแล้ว {floatingCount} / {Math.max(2, Object.keys(roomState.users).length)} ใบ
               </div>
             </div>
 
@@ -418,6 +458,8 @@ export default function App() {
                 krathongs={allKrathongsList}
                 sharedLoveActive={bothFloating}
                 hasSharedLoveEvent={hasSharedLoveEvent && bothFloating}
+                myName={currentUser.displayName}
+                partnerName={partnerUser?.displayName}
                 onReplaySharedLove={() => setShowLoveOverlay(true)}
               />
             </div>
@@ -428,8 +470,9 @@ export default function App() {
           <ChatView
             currentUser={currentUser}
             partnerUser={partnerUser}
+            usersMap={roomState.users}
             messages={roomState.messages ?? []}
-            partnerTyping={partnerTyping}
+            typingUserName={typingUserName}
             onSendMessage={handleSendChatMessage}
             onTypingChange={handleTypingChange}
             onBackToRiver={() => navigateTo('river')}
@@ -439,18 +482,21 @@ export default function App() {
         {activeView === 'hearts' && (
           <TwoHeartsView
             currentUser={currentUser}
+            partnerUser={partnerUser}
             roomState={roomState}
             onResetRoom={handleResetRoom}
           />
         )}
       </main>
 
-      <SharedLoveOverlay
-        visible={activeView === 'river' && bothFloating && showLoveOverlay}
-        myName={currentUser.displayName}
-        partnerName={partnerUser.displayName}
-        onDismiss={() => setShowLoveOverlay(false)}
-      />
+      {partnerUser && (
+        <SharedLoveOverlay
+          visible={activeView === 'river' && bothFloating && showLoveOverlay}
+          myName={currentUser.displayName}
+          partnerName={partnerUser.displayName}
+          onDismiss={() => setShowLoveOverlay(false)}
+        />
+      )}
 
       <LogoutConfirmModal
         open={logoutModalOpen}
@@ -461,4 +507,3 @@ export default function App() {
     </div>
   );
 }
-

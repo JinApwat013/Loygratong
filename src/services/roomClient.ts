@@ -6,24 +6,49 @@ import {
   KrathongDesign,
   PRIVATE_ROOM_ID,
   RoomState,
+  RoomUser,
   WsClientMessage,
   WsServerMessage,
 } from '../types/universe';
 
-const TAB_SESSION_KEY = 'olu_tab_session_v1';
-const LS_LAST_PROFILE_KEY = 'olu_last_selected_uid_v1';
+const TAB_SESSION_KEY = 'olu_tab_session_v2';
+const LS_SAVED_PROFILE_KEY = 'olu_saved_profile_v1';
 const LS_KRATHONG_PREFIX = 'olu_krathong_';
 const LS_EVENTS_KEY = `olu_events_${PRIVATE_ROOM_ID}`;
 const LS_CHAT_KEY = `olu_chat_messages_${PRIVATE_ROOM_ID}`;
 const LS_SEEN_EVENT_PREFIX = 'olu_seen_love_event_';
 const BROADCAST_CHANNEL_NAME = 'olu_universe_channel_v1';
 
-export function getLastSelectedProfileUid(): 'user_001' | 'user_002' | null {
+export interface RememberedProfile {
+  uid: string;
+  displayName: string;
+}
+
+export function getRememberedProfile(): RememberedProfile | null {
   try {
-    const val = localStorage.getItem(LS_LAST_PROFILE_KEY);
-    return val === 'user_001' || val === 'user_002' ? val : null;
+    const raw = localStorage.getItem(LS_SAVED_PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RememberedProfile>;
+    if (typeof parsed?.uid === 'string' && typeof parsed?.displayName === 'string' && parsed.displayName.trim()) {
+      return {
+        uid: parsed.uid,
+        displayName: parsed.displayName.trim(),
+      };
+    }
+    return null;
   } catch {
     return null;
+  }
+}
+
+export function saveRememberedProfile(uid: string, displayName: string): void {
+  try {
+    localStorage.setItem(
+      LS_SAVED_PROFILE_KEY,
+      JSON.stringify({ uid, displayName: displayName.trim() }),
+    );
+  } catch {
+    // Ignore storage quota errors
   }
 }
 
@@ -41,7 +66,7 @@ export function getSavedTabSession(): AuthSession | null {
     const raw = sessionStorage.getItem(TAB_SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthSession;
-    if (!parsed?.token || !parsed?.user?.uid) return null;
+    if (!parsed?.token || !parsed?.user?.uid || !parsed?.user?.displayName) return null;
     return parsed;
   } catch {
     return null;
@@ -57,29 +82,14 @@ export function clearTabSession(): void {
 }
 
 /**
- * Mirrors server room state into localStorage cleanly separated by ownerUid
- * (user_001 and user_002) for same-machine inspection & offline resilience.
+ * Mirrors server room state into localStorage separated by ownerUid
+ * for resilience across refreshes.
  */
 export function mirrorStateToLocalStorage(state: RoomState): void {
   try {
-    if (state.krathongs.user_001) {
-      localStorage.setItem(
-        `${LS_KRATHONG_PREFIX}user_001`,
-        JSON.stringify(state.krathongs.user_001),
-      );
-    } else {
-      localStorage.removeItem(`${LS_KRATHONG_PREFIX}user_001`);
+    for (const [uid, krathong] of Object.entries(state.krathongs)) {
+      localStorage.setItem(`${LS_KRATHONG_PREFIX}${uid}`, JSON.stringify(krathong));
     }
-
-    if (state.krathongs.user_002) {
-      localStorage.setItem(
-        `${LS_KRATHONG_PREFIX}user_002`,
-        JSON.stringify(state.krathongs.user_002),
-      );
-    } else {
-      localStorage.removeItem(`${LS_KRATHONG_PREFIX}user_002`);
-    }
-
     localStorage.setItem(LS_EVENTS_KEY, JSON.stringify(state.events));
     if (Array.isArray(state.messages)) {
       localStorage.setItem(LS_CHAT_KEY, JSON.stringify(state.messages));
@@ -102,7 +112,7 @@ export function appendChatMessageToLocalStorage(msg: ChatMessage): void {
   }
 }
 
-export function hasSeenLoveEvent(uid: 'user_001' | 'user_002', eventId: string): boolean {
+export function hasSeenLoveEvent(uid: string, eventId: string): boolean {
   try {
     return localStorage.getItem(`${LS_SEEN_EVENT_PREFIX}${uid}`) === eventId;
   } catch {
@@ -110,7 +120,7 @@ export function hasSeenLoveEvent(uid: 'user_001' | 'user_002', eventId: string):
   }
 }
 
-export function markLoveEventSeen(uid: 'user_001' | 'user_002', eventId: string): void {
+export function markLoveEventSeen(uid: string, eventId: string): void {
   try {
     localStorage.setItem(`${LS_SEEN_EVENT_PREFIX}${uid}`, eventId);
   } catch {
@@ -118,38 +128,69 @@ export function markLoveEventSeen(uid: 'user_001' | 'user_002', eventId: string)
   }
 }
 
-export function clearSeenLoveEvent(uid: 'user_001' | 'user_002'): void {
+export function clearAllSeenLoveEvents(uids: string[]): void {
   try {
-    localStorage.removeItem(`${LS_SEEN_EVENT_PREFIX}${uid}`);
+    for (const uid of uids) {
+      localStorage.removeItem(`${LS_SEEN_EVENT_PREFIX}${uid}`);
+    }
   } catch {
     // Ignore storage errors
   }
 }
 
-export async function selectProfileLogin(
-  uid: 'user_001' | 'user_002',
-): Promise<AuthSession> {
+export async function loginWithName(displayName: string): Promise<AuthSession> {
+  const remembered = getRememberedProfile();
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uid }),
+    body: JSON.stringify({
+      displayName: displayName.trim(),
+      uid: remembered?.uid,
+    }),
   });
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data?.error || 'ไม่สามารถเข้าสู่บัญชีที่เลือกได้');
+    throw new Error(data?.error || 'ไม่สามารถเข้าสู่ระบบได้');
   }
   const session: AuthSession = {
     token: data.token,
     user: data.user,
   };
   saveTabSession(session);
-  try {
-    localStorage.setItem(LS_LAST_PROFILE_KEY, uid);
-  } catch {
-    // Ignore storage errors
-  }
+  saveRememberedProfile(session.user.uid, session.user.displayName);
   return session;
+}
+
+export async function updateMyDisplayName(
+  token: string,
+  displayName: string,
+): Promise<{ user: RoomUser; state: RoomState }> {
+  const res = await fetch('/api/auth/name', {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ displayName: displayName.trim() }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || 'ไม่สามารถเปลี่ยนชื่อได้');
+  }
+
+  const currentSession = getSavedTabSession();
+  if (currentSession) {
+    saveTabSession({
+      ...currentSession,
+      user: data.user,
+    });
+  }
+  saveRememberedProfile(data.user.uid, data.user.displayName);
+  mirrorStateToLocalStorage(data.state);
+  notifyLocalTabs({ type: 'ROOM_SYNC', payload: data.state });
+  return data;
 }
 
 export async function logoutSession(token: string): Promise<void> {
@@ -227,7 +268,7 @@ export async function floatMyKrathong(
   return data;
 }
 
-export async function resetPrivateRoom(token: string): Promise<RoomState> {
+export async function resetPrivateRoom(token: string, memberUids: string[]): Promise<RoomState> {
   const res = await fetch('/api/room/reset', {
     method: 'POST',
     headers: {
@@ -238,8 +279,7 @@ export async function resetPrivateRoom(token: string): Promise<RoomState> {
   if (!res.ok) {
     throw new Error(data?.error || 'รีเซ็ตห้องไม่สำเร็จ');
   }
-  clearSeenLoveEvent('user_001');
-  clearSeenLoveEvent('user_002');
+  clearAllSeenLoveEvents(memberUids);
   mirrorStateToLocalStorage(data.state);
   notifyLocalTabs({ type: 'ROOM_RESET', payload: data.state });
   return data.state;
@@ -282,7 +322,7 @@ export interface RealtimeSubscriptionHandlers {
 
 export interface RealtimeSubscriptionHandle {
   unsubscribe: () => void;
-  sendTyping: (uid: 'user_001' | 'user_002', isTyping: boolean) => void;
+  sendTyping: (uid: string, isTyping: boolean) => void;
 }
 
 export function subscribeRealtimeRoom(
@@ -349,7 +389,7 @@ export function subscribeRealtimeRoom(
 
   connect();
 
-  const sendTyping = (uid: 'user_001' | 'user_002', isTyping: boolean) => {
+  const sendTyping = (uid: string, isTyping: boolean) => {
     if (closed) return;
     const payload: WsClientMessage = {
       type: 'TYPING',

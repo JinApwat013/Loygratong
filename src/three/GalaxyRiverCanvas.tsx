@@ -11,6 +11,8 @@ interface GalaxyRiverCanvasProps {
   sharedLoveActive: boolean;
   onReplaySharedLove?: () => void;
   hasSharedLoveEvent: boolean;
+  myName?: string;
+  partnerName?: string;
 }
 
 interface ProjectedLabel {
@@ -83,6 +85,8 @@ export function GalaxyRiverCanvas({
   sharedLoveActive,
   onReplaySharedLove,
   hasSharedLoveEvent,
+  myName,
+  partnerName,
 }: GalaxyRiverCanvasProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -97,6 +101,7 @@ export function GalaxyRiverCanvas({
       {
         data: Krathong;
         handle: KrathongMeshHandle;
+        slotIndex: number;
         targetX: number;
         targetZ: number;
       }
@@ -448,9 +453,7 @@ export function GalaxyRiverCanvas({
       floatingMapRef.current.forEach((entry) => {
         const isPairMode = isLoveNow && count >= 2;
         const desiredX = isPairMode
-          ? entry.data.ownerUid === 'user_001'
-            ? -1.18
-            : 1.18
+          ? (entry.slotIndex - (count - 1) / 2) * 2.35
           : entry.targetX;
         const desiredZ = isPairMode ? 0.5 : entry.targetZ;
 
@@ -580,11 +583,23 @@ export function GalaxyRiverCanvas({
       }
     });
 
-    // Add newly floated krathongs with smooth glide-in entry position
-    floatingList.forEach((k) => {
-      const targetX = k.ownerUid === 'user_001' ? -1.85 : 1.85;
-      const targetZ = k.ownerUid === 'user_001' ? 0.9 : 0.2;
-      if (!floatingMapRef.current.has(k.krathongId)) {
+    // Add newly floated krathongs with smooth glide-in entry position, and sync updated ownerName
+    const sortedFloating = [...floatingList].sort((a, b) =>
+      (a.floatedAt ?? a.createdAt).localeCompare(b.floatedAt ?? b.createdAt),
+    );
+    const total = sortedFloating.length;
+
+    sortedFloating.forEach((k, slotIndex) => {
+      const targetX = total <= 1 ? 0 : (slotIndex - (total - 1) / 2) * 3.4;
+      const targetZ = slotIndex % 2 === 0 ? 0.9 : 0.2;
+      const existingEntry = floatingMapRef.current.get(k.krathongId);
+
+      if (existingEntry) {
+        existingEntry.data = k;
+        existingEntry.slotIndex = slotIndex;
+        existingEntry.targetX = targetX;
+        existingEntry.targetZ = targetZ;
+      } else {
         const handle = buildProceduralKrathong(
           {
             design: k.design,
@@ -594,13 +609,13 @@ export function GalaxyRiverCanvas({
           },
           { enablePointLight: true },
         );
-        // Start slightly off-side so it gently glides into view in real-time!
-        const startX = k.ownerUid === 'user_001' ? -6.5 : 6.5;
+        const startX = slotIndex % 2 === 0 ? -6.5 : 6.5;
         handle.group.position.set(startX, 0.02, 4.2);
         scene.add(handle.group);
         floatingMapRef.current.set(k.krathongId, {
           data: k,
           handle,
+          slotIndex,
           targetX,
           targetZ,
         });
@@ -696,7 +711,9 @@ export function GalaxyRiverCanvas({
                     “{lbl.wishMessage}”
                   </p>
                 ) : (
-                  <p className="mt-1 text-[11px] text-slate-400">คำอธิษฐานเก็บไว้ในใจ</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    คำอธิษฐานของ {lbl.ownerName}
+                  </p>
                 )}
                 {lbl.floatedAt && (
                   <p className="font-mono-tabular mt-1 text-[10px] text-slate-400">
@@ -713,7 +730,11 @@ export function GalaxyRiverCanvas({
         <div className="pointer-events-none absolute inset-x-0 top-8 flex justify-center px-4">
           <div className="rounded-xl border border-white/15 bg-[#0b0920]/85 px-5 py-3 text-center">
             <p className="text-sm font-medium text-slate-100">
-              ผิวน้ำกาแล็กซียังเงียบสงบ รอคอยกระทงใบแรกจากเราสองคน
+              {myName && partnerName
+                ? `ผิวน้ำกาแล็กซียังเงียบสงบ รอคอยกระทงของ ${myName} และ ${partnerName}`
+                : myName
+                  ? `ผิวน้ำกาแล็กซียังเงียบสงบ รอคอยกระทงของ ${myName}`
+                  : 'ผิวน้ำกาแล็กซียังเงียบสงบ รอคอยกระทงใบแรก'}
             </p>
             <p className="mt-0.5 text-xs text-slate-400">
               เฉพาะกระทงที่กดลอยแล้วเท่านั้นจึงจะปรากฏบนแม่น้ำแห่งดวงดาวสายนี้
@@ -792,7 +813,11 @@ export function GalaxyRiverCanvas({
                 className="inline-flex items-center gap-1.5 rounded-lg border border-pink-400/30 bg-pink-500/15 px-3 py-1.5 text-xs font-medium text-pink-200 transition-colors hover:bg-pink-500/25 whitespace-nowrap"
               >
                 <Heart className="h-3.5 w-3.5" />
-                <span>ดูช่วงเวลาของเราอีกครั้ง</span>
+                <span>
+                  {myName && partnerName
+                    ? `ดูช่วงเวลาของ ${myName} กับ ${partnerName}`
+                    : 'ดูช่วงเวลาลอยกระทงคู่'}
+                </span>
               </button>
             )}
 

@@ -1,4 +1,17 @@
-import { ArrowRight, Flame, Heart, MessageCircle, Star, Wifi, WifiOff } from 'lucide-react';
+import { FormEvent, useState } from 'react';
+import {
+  ArrowRight,
+  Check,
+  Flame,
+  Heart,
+  Loader2,
+  MessageCircle,
+  Pencil,
+  Star,
+  Wifi,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import {
   AppView,
   DESIGN_OPTIONS,
@@ -10,28 +23,32 @@ import {
 
 interface DashboardViewProps {
   currentUser: RoomUser;
+  partnerUser: RoomUser | undefined;
   roomState: RoomState;
   wsConnected: boolean;
   unreadChatCount: number;
   onNavigate: (view: AppView) => void;
+  onRename: (nextName: string) => Promise<void>;
 }
 
 export function DashboardView({
   currentUser,
+  partnerUser,
   roomState,
   wsConnected,
   unreadChatCount,
   onNavigate,
+  onRename,
 }: DashboardViewProps) {
-  const isUser1 = currentUser.uid === 'user_001';
-  const partnerUid = isUser1 ? 'user_002' : 'user_001';
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(currentUser.displayName);
+  const [savingName, setSavingName] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
-  const me = roomState.users[currentUser.uid];
-  const partner = roomState.users[partnerUid];
   const myKrathong = roomState.krathongs[currentUser.uid];
-  const partnerKrathong = roomState.krathongs[partnerUid];
+  const partnerKrathong = partnerUser ? roomState.krathongs[partnerUser.uid] : undefined;
 
-  const floatedCount = [myKrathong, partnerKrathong].filter(
+  const floatedCount = Object.values(roomState.krathongs).filter(
     (k) => k?.status === KrathongStatus.FLOATING,
   ).length;
 
@@ -39,12 +56,31 @@ export function DashboardView({
     ? DESIGN_OPTIONS.find((d) => d.id === myKrathong.design)?.label ?? 'กลีบบัวดารา'
     : 'ยังไม่ได้สร้าง';
 
-  const greetingTitle = isUser1
-    ? `สวัสดี ${me.displayName} 🌙`
-    : `สวัสดี ${me.displayName} ❤️`;
-  const greetingSubtitle = partner.onlineStatus
-    ? `${partner.displayName}เข้ามารอแล้ว · มาลอยกระทงและคุยกันในห้องส่วนตัวได้เลย`
-    : `${me.displayName}กำลังรอ${partner.displayName}อยู่นะ · เตรียมกระทงไว้ลอยด้วยกันคืนนี้`;
+  const greetingTitle = `สวัสดี ${currentUser.displayName} ❤️`;
+  const greetingSubtitle = partnerUser
+    ? partnerUser.onlineStatus
+      ? `${partnerUser.displayName}เข้ามารอแล้ว · มาลอยกระทงและคุยกันในห้องส่วนตัวได้เลย`
+      : `${currentUser.displayName}กำลังรอ${partnerUser.displayName}อยู่นะ · เตรียมกระทงไว้ลอยด้วยกันคืนนี้`
+    : `ยินดีต้อนรับ ${currentUser.displayName} · เริ่มสร้างกระทงของ${currentUser.displayName}หรือรออีกคนเข้ามาในห้องได้เลย`;
+
+  const handleRenameSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setRenameError('กรุณากรอกชื่อก่อนบันทึก');
+      return;
+    }
+    setRenameError(null);
+    setSavingName(true);
+    try {
+      await onRename(trimmed);
+      setEditingName(false);
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : 'ไม่สามารถเปลี่ยนชื่อได้');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
@@ -57,12 +93,71 @@ export function DashboardView({
               <span aria-hidden="true">·</span>
               <span className="font-mono-tabular text-slate-400">{PRIVATE_ROOM_ID}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-slate-300">บัญชี {me.displayName}</span>
+              <span className="text-slate-300">
+                ชื่อ: {currentUser.displayName} ({currentUser.uid})
+              </span>
             </div>
 
-            <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              {greetingTitle}
-            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <h1 className="font-display text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                {greetingTitle}
+              </h1>
+              {!editingName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(currentUser.displayName);
+                    setRenameError(null);
+                    setEditingName(true);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <Pencil className="h-3 w-3" />
+                  <span>เปลี่ยนชื่อ</span>
+                </button>
+              )}
+            </div>
+
+            {editingName && (
+              <form onSubmit={handleRenameSubmit} className="mt-3 max-w-md space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    maxLength={40}
+                    value={nameDraft}
+                    onChange={(e) => {
+                      setNameDraft(e.target.value);
+                      if (renameError) setRenameError(null);
+                    }}
+                    placeholder="กรอกชื่อใหม่..."
+                    className="min-w-[180px] flex-1 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-sm text-white placeholder-slate-400 focus:border-pink-400 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingName}
+                    className="inline-flex items-center gap-1 rounded-lg bg-pink-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pink-400 disabled:opacity-60"
+                  >
+                    {savingName ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                    <span>บันทึก</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingName}
+                    onClick={() => setEditingName(false)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-white/10"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>ยกเลิก</span>
+                  </button>
+                </div>
+                {renameError && <p className="text-xs text-rose-300">{renameError}</p>}
+              </form>
+            )}
+
             <p className="mt-2.5 text-base leading-relaxed text-slate-300">{greetingSubtitle}</p>
           </div>
 
@@ -74,10 +169,10 @@ export function DashboardView({
             >
               <span>
                 {myKrathong?.status === KrathongStatus.FLOATING
-                  ? `ดูกระทงของ${me.displayName}`
+                  ? `ดูกระทงของ${currentUser.displayName}`
                   : myKrathong
-                    ? 'แต่งกระทงต่อ'
-                    : `สร้างกระทงของ${me.displayName}`}
+                    ? `แต่งกระทงของ${currentUser.displayName}ต่อ`
+                    : `สร้างกระทงของ${currentUser.displayName}`}
               </span>
               <ArrowRight className="h-4 w-4" />
             </button>
@@ -94,7 +189,7 @@ export function DashboardView({
               className="inline-flex items-center gap-2 rounded-xl border border-pink-400/35 bg-pink-500/15 px-5 py-2.5 text-sm font-medium text-pink-100 transition-colors hover:bg-pink-500/25 whitespace-nowrap"
             >
               <MessageCircle className="h-4 w-4 text-pink-300" />
-              <span>แชตกับ{partner.displayName}</span>
+              <span>{partnerUser ? `แชตกับ${partnerUser.displayName}` : 'เปิดห้องแชต'}</span>
               {unreadChatCount > 0 && (
                 <span className="font-mono-tabular text-xs text-pink-200">
                   ({unreadChatCount})
@@ -109,55 +204,63 @@ export function DashboardView({
       <section className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {/* 1. My Status */}
         <div className="rounded-2xl border border-white/10 bg-[#0d0a22]/85 p-5">
-          <p className="text-xs font-medium text-slate-400">สถานะของ{me.displayName}</p>
+          <p className="text-xs font-medium text-slate-400">สถานะของ{currentUser.displayName}</p>
           <div className="mt-3 flex items-center gap-2.5">
             <Star
               className={`h-4 w-4 ${
-                me.onlineStatus
+                currentUser.onlineStatus
                   ? 'fill-emerald-400 text-emerald-400'
                   : 'fill-slate-500 text-slate-500'
               }`}
             />
             <span className="text-base font-semibold text-white">
-              {me.onlineStatus ? 'ออนไลน์อยู่ในห้อง' : 'กำลังเชื่อมต่อ'}
+              {currentUser.onlineStatus ? 'ออนไลน์อยู่ในห้อง' : 'กำลังเชื่อมต่อ'}
             </span>
           </div>
           <p className="mt-2 text-xs text-slate-400">
             {myKrathong?.status === KrathongStatus.FLOATING
-              ? 'ลอยกระทงลงแม่น้ำแล้ว'
+              ? `${currentUser.displayName}ลอยกระทงลงแม่น้ำแล้ว`
               : myKrathong
-                ? 'กำลังเตรียมกระทง'
-                : 'ยังไม่ได้เริ่มสร้างกระทง'}
+                ? `${currentUser.displayName}กำลังเตรียมกระทง`
+                : `${currentUser.displayName}ยังไม่ได้เริ่มสร้างกระทง`}
           </p>
         </div>
 
         {/* 2. Partner Status */}
         <div className="rounded-2xl border border-white/10 bg-[#0d0a22]/85 p-5">
-          <p className="text-xs font-medium text-slate-400">สถานะของ{partner.displayName}</p>
+          <p className="text-xs font-medium text-slate-400">
+            {partnerUser ? `สถานะของ${partnerUser.displayName}` : 'คู่สนทนาในจักรวาล'}
+          </p>
           <div className="mt-3 flex items-center gap-2.5">
             <Star
               className={`h-4 w-4 ${
-                partner.onlineStatus
+                partnerUser?.onlineStatus
                   ? 'fill-emerald-400 text-emerald-400'
                   : 'fill-slate-500 text-slate-500'
               }`}
             />
             <span className="text-base font-semibold text-white">
-              {partner.onlineStatus ? 'ออนไลน์พร้อมกัน' : 'ออฟไลน์'}
+              {partnerUser
+                ? partnerUser.onlineStatus
+                  ? 'ออนไลน์พร้อมกัน'
+                  : 'ออฟไลน์'
+                : 'รออีกคนเข้ามา'}
             </span>
           </div>
           <p className="mt-2 text-xs text-slate-400">
-            {partnerKrathong?.status === KrathongStatus.FLOATING
-              ? `${partner.displayName}ลอยกระทงแล้ว`
-              : partnerKrathong
-                ? `${partner.displayName}กำลังเตรียมกระทง`
-                : `รอ${partner.displayName}สร้างกระทง`}
+            {partnerUser
+              ? partnerKrathong?.status === KrathongStatus.FLOATING
+                ? `${partnerUser.displayName}ลอยกระทงแล้ว`
+                : partnerKrathong
+                  ? `${partnerUser.displayName}กำลังเตรียมกระทง`
+                  : `รอ${partnerUser.displayName}สร้างกระทง`
+              : 'ส่งลิงก์เว็บนี้ให้อีกคนกรอกชื่อเพื่อเข้าห้องได้เลย'}
           </p>
         </div>
 
         {/* 3. My Krathong Summary */}
         <div className="rounded-2xl border border-white/10 bg-[#0d0a22]/85 p-5">
-          <p className="text-xs font-medium text-slate-400">กระทงของ{me.displayName}</p>
+          <p className="text-xs font-medium text-slate-400">กระทงของ{currentUser.displayName}</p>
           <div className="mt-3 flex items-center gap-2.5">
             {myKrathong?.status === KrathongStatus.FLOATING ? (
               <Heart className="h-4 w-4 fill-pink-400 text-pink-400" />
@@ -167,7 +270,9 @@ export function DashboardView({
             <span className="truncate text-base font-semibold text-white">{myDesignLabel}</span>
           </div>
           <p className="mt-2 truncate text-xs text-slate-400">
-            {myKrathong?.wishMessage ? `“${myKrathong.wishMessage}”` : 'ยังไม่ได้เขียนคำอธิษฐาน'}
+            {myKrathong?.wishMessage
+              ? `คำอธิษฐานของ${currentUser.displayName}: “${myKrathong.wishMessage}”`
+              : `${currentUser.displayName}ยังไม่ได้เขียนคำอธิษฐาน`}
           </p>
         </div>
 
@@ -178,7 +283,9 @@ export function DashboardView({
             <span className="font-mono-tabular text-2xl font-semibold text-white">
               {floatedCount}
             </span>
-            <span className="font-mono-tabular text-sm text-slate-400">/ 2 ใบ</span>
+            <span className="font-mono-tabular text-sm text-slate-400">
+              / {Math.max(2, Object.keys(roomState.users).length)} ใบ
+            </span>
           </div>
           <div className="mt-2 flex items-center gap-1.5 text-xs">
             {wsConnected ? (
@@ -196,19 +303,23 @@ export function DashboardView({
         </div>
       </section>
 
-      {/* Two Hearts Connection Summary Row */}
+      {/* Connection Summary Row */}
       <section className="mt-8 rounded-2xl border border-white/10 bg-[#0d0a22]/75 p-6 sm:p-7">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <h2 className="font-display text-lg font-semibold text-white">
-              ความคืบหน้าในแม่น้ำกาแล็กซีของเราสองคน
+              {partnerUser
+                ? `ความคืบหน้าในแม่น้ำกาแล็กซีของ ${currentUser.displayName} และ ${partnerUser.displayName}`
+                : `ความคืบหน้าในแม่น้ำกาแล็กซีของ ${currentUser.displayName}`}
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              {floatedCount === 2
-                ? 'กระทงของเราสองคนลอยเคียงคู่กันบนแม่น้ำแห่งดวงดาวแล้ว'
+              {floatedCount >= 2
+                ? partnerUser
+                  ? `กระทงของ ${currentUser.displayName} และ ${partnerUser.displayName} ลอยเคียงคู่กันบนแม่น้ำแห่งดวงดาวแล้ว`
+                  : 'กระทงลอยเคียงคู่กันบนแม่น้ำแห่งดวงดาวแล้ว'
                 : floatedCount === 1
                   ? 'มีกระทงลอยลงสู่แม่น้ำแล้ว 1 ใบ รออีกใบมาลอยเคียงคู่กัน'
-                  : 'ออกแบบกระทงของตัวเองแล้วกดลอย เพื่อส่งคำอธิษฐานสู่แม่น้ำกาแล็กซี'}
+                  : `ออกแบบกระทงของ${currentUser.displayName}แล้วกดลอย เพื่อส่งคำอธิษฐานสู่แม่น้ำกาแล็กซี`}
             </p>
           </div>
           <button
@@ -216,7 +327,7 @@ export function DashboardView({
             onClick={() => onNavigate('hearts')}
             className="self-start rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 whitespace-nowrap sm:self-auto"
           >
-            ดูหน้าสถานะสองหัวใจ
+            ดูหน้าสถานะหัวใจ
           </button>
         </div>
       </section>

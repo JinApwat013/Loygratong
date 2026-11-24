@@ -22,11 +22,11 @@ export function LogoutConfirmModal({
     >
       <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#0e0b26] p-6 shadow-2xl">
         <h2 id="logout-modal-title" className="font-display text-xl font-semibold text-white">
-          ออกจากจักรวาลของเราใช่ไหม?
+          ออกจากห้องใช่ไหม {displayName}?
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-slate-300">
           ข้อมูลกระทงและคำอธิษฐานของ <span className="font-medium text-white">{displayName}</span>{' '}
-          จะยังคงถูกเก็บรักษาไว้ และจะแสดงให้เห็นเหมือนเดิมเมื่อเข้าสู่ระบบอีกครั้ง
+          จะยังคงถูกเก็บรักษาไว้ และสามารถกลับมาใช้ชื่อเดิมหรือเปลี่ยนชื่อใหม่ได้ที่หน้าเข้าสู่ระบบ
         </p>
         <div className="mt-6 flex items-center justify-end gap-3">
           <button

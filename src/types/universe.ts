@@ -1,6 +1,5 @@
 export enum UserRole {
-  USER_1 = 'USER_1',
-  USER_2 = 'USER_2',
+  MEMBER = 'MEMBER',
 }
 
 export enum KrathongStatus {
@@ -25,11 +24,11 @@ export enum KrathongDecoration {
 export type AppView = 'dashboard' | 'studio' | 'river' | 'hearts' | 'chat';
 
 export const PRIVATE_ROOM_ID = 'OUR_LOVE_ROOM_001';
-export const PRIVATE_ROOM_NAME = 'PRIVATE LOVE ROOM · ห้องลอยกระทงของเราสองคน';
+export const PRIVATE_ROOM_NAME = 'OUR LITTLE UNIVERSE · ห้องลอยกระทง';
 
 export interface RoomUser {
-  uid: 'user_001' | 'user_002';
-  displayName: 'จิน' | 'ชื่อแฟน';
+  uid: string;
+  displayName: string;
   role: UserRole;
   onlineStatus: boolean;
   lastSeen: string;
@@ -37,8 +36,8 @@ export interface RoomUser {
 
 export interface Krathong {
   krathongId: string;
-  ownerUid: 'user_001' | 'user_002';
-  ownerName: 'จิน' | 'ชื่อแฟน';
+  ownerUid: string;
+  ownerName: string;
   roomId: typeof PRIVATE_ROOM_ID;
   design: KrathongDesign;
   flowerColor: string;
@@ -62,8 +61,8 @@ export interface RoomEvent {
 export interface ChatMessage {
   messageId: string;
   roomId: typeof PRIVATE_ROOM_ID;
-  senderId: 'user_001' | 'user_002';
-  senderName: 'จิน' | 'ชื่อแฟน';
+  senderId: string;
+  senderName: string;
   message: string;
   createdAt: string;
 }
@@ -72,11 +71,11 @@ export interface RoomState {
   room: {
     roomId: typeof PRIVATE_ROOM_ID;
     roomName: string;
-    memberUids: ['user_001', 'user_002'];
+    memberUids: string[];
     createdAt: string;
   };
-  users: Record<'user_001' | 'user_002', RoomUser>;
-  krathongs: Partial<Record<'user_001' | 'user_002', Krathong>>;
+  users: Record<string, RoomUser>;
+  krathongs: Record<string, Krathong>;
   events: RoomEvent[];
   messages: ChatMessage[];
 }
@@ -101,7 +100,7 @@ export type WsServerMessage =
   | {
       type: 'TYPING_STATUS';
       payload: {
-        uid: 'user_001' | 'user_002';
+        uid: string;
         isTyping: boolean;
       };
     };

@@ -25,50 +25,16 @@ const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'room-state.json');
 const TOKEN_SECRET = process.env.UNIVERSE_SESSION_SECRET || 'our-little-universe-private-room-001';
 
-interface ProfileAccount {
-  uid: 'user_001' | 'user_002';
-  displayName: 'จิน' | 'ชื่อแฟน';
-  role: UserRole;
-}
-
-const FIXED_ACCOUNTS: readonly ProfileAccount[] = [
-  {
-    uid: 'user_001',
-    displayName: 'จิน',
-    role: UserRole.USER_1,
-  },
-  {
-    uid: 'user_002',
-    displayName: 'ชื่อแฟน',
-    role: UserRole.USER_2,
-  },
-];
-
 function createInitialRoomState(): RoomState {
   const now = new Date().toISOString();
   return {
     room: {
       roomId: PRIVATE_ROOM_ID,
       roomName: PRIVATE_ROOM_NAME,
-      memberUids: ['user_001', 'user_002'],
+      memberUids: [],
       createdAt: now,
     },
-    users: {
-      user_001: {
-        uid: 'user_001',
-        displayName: 'จิน',
-        role: UserRole.USER_1,
-        onlineStatus: false,
-        lastSeen: now,
-      },
-      user_002: {
-        uid: 'user_002',
-        displayName: 'ชื่อแฟน',
-        role: UserRole.USER_2,
-        onlineStatus: false,
-        lastSeen: now,
-      },
-    },
+    users: {},
     krathongs: {},
     events: [],
     messages: [],
@@ -83,27 +49,35 @@ function loadRoomState(): RoomState {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, 'utf-8');
       const parsed = JSON.parse(raw) as RoomState;
-      if (parsed?.room?.roomId === PRIVATE_ROOM_ID && parsed.users?.user_001 && parsed.users?.user_002) {
-        parsed.users.user_001.displayName = 'จิน';
-        parsed.users.user_001.onlineStatus = false;
-        parsed.users.user_002.displayName = 'ชื่อแฟน';
-        parsed.users.user_002.onlineStatus = false;
+      const hasLegacyPlaceholder =
+        parsed?.users?.user_002?.displayName === 'ชื่อแฟน' &&
+        parsed?.users?.user_001?.displayName === 'จิน';
 
-        if (parsed.krathongs?.user_001) {
-          parsed.krathongs.user_001.ownerName = 'จิน';
+      if (parsed?.room?.roomId === PRIVATE_ROOM_ID && !hasLegacyPlaceholder) {
+        const users: Record<string, RoomUser> = {};
+        for (const [uid, user] of Object.entries(parsed.users ?? {})) {
+          if (user && typeof user.displayName === 'string' && user.displayName.trim()) {
+            users[uid] = {
+              uid,
+              displayName: user.displayName.trim(),
+              role: UserRole.MEMBER,
+              onlineStatus: false,
+              lastSeen: user.lastSeen || new Date().toISOString(),
+            };
+          }
         }
-        if (parsed.krathongs?.user_002) {
-          parsed.krathongs.user_002.ownerName = 'ชื่อแฟน';
-        }
-        if (!Array.isArray(parsed.messages)) {
-          parsed.messages = [];
-        } else {
-          parsed.messages = parsed.messages.map((m) => ({
-            ...m,
-            senderName: m.senderId === 'user_001' ? 'จิน' : 'ชื่อแฟน',
-          }));
-        }
-        return parsed;
+        return {
+          room: {
+            roomId: PRIVATE_ROOM_ID,
+            roomName: PRIVATE_ROOM_NAME,
+            memberUids: Object.keys(users),
+            createdAt: parsed.room.createdAt || new Date().toISOString(),
+          },
+          users,
+          krathongs: parsed.krathongs && typeof parsed.krathongs === 'object' ? parsed.krathongs : {},
+          events: Array.isArray(parsed.events) ? parsed.events : [],
+          messages: Array.isArray(parsed.messages) ? parsed.messages.slice(-500) : [],
+        };
       }
     }
   } catch (err) {
@@ -125,7 +99,7 @@ function saveRoomState(state: RoomState): void {
   }
 }
 
-function signToken(uid: 'user_001' | 'user_002'): string {
+function signToken(uid: string): string {
   const payload = Buffer.from(
     JSON.stringify({ uid, roomId: PRIVATE_ROOM_ID, iat: Date.now() }),
   ).toString('base64url');
@@ -133,7 +107,7 @@ function signToken(uid: 'user_001' | 'user_002'): string {
   return `${payload}.${sig}`;
 }
 
-function verifyToken(token: string | undefined): ProfileAccount | null {
+function verifyToken(token: string | undefined): RoomUser | null {
   if (!token) return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
@@ -149,34 +123,40 @@ function verifyToken(token: string | undefined): ProfileAccount | null {
       uid?: string;
       roomId?: string;
     };
-    if (decoded.roomId !== PRIVATE_ROOM_ID) return null;
-    return FIXED_ACCOUNTS.find((acc) => acc.uid === decoded.uid) ?? null;
+    if (decoded.roomId !== PRIVATE_ROOM_ID || !decoded.uid) return null;
+    return roomState.users[decoded.uid] ?? null;
   } catch {
     return null;
   }
 }
 
 interface AuthenticatedRequest extends Request {
-  authUser?: ProfileAccount;
+  authUser?: RoomUser;
 }
 
 function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined;
-  const account = verifyToken(token);
-  if (!account) {
-    res.status(401).json({ error: 'กรุณาเลือกบัญชีผู้ใช้ก่อนเข้าสู่ห้องส่วนตัว' });
+  const user = verifyToken(token);
+  if (!user) {
+    res.status(401).json({ error: 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ' });
     return;
   }
-  req.authUser = account;
+  req.authUser = user;
   next();
 }
 
 const roomState: RoomState = loadRoomState();
-const userSockets = new Map<'user_001' | 'user_002', Set<WebSocket>>([
-  ['user_001', new Set()],
-  ['user_002', new Set()],
-]);
+const userSockets = new Map<string, Set<WebSocket>>();
+
+function getSocketSet(uid: string): Set<WebSocket> {
+  let set = userSockets.get(uid);
+  if (!set) {
+    set = new Set<WebSocket>();
+    userSockets.set(uid, set);
+  }
+  return set;
+}
 
 function broadcast(message: WsServerMessage): void {
   const encoded = JSON.stringify(message);
@@ -189,23 +169,40 @@ function broadcast(message: WsServerMessage): void {
   }
 }
 
-function syncPresence(uid: 'user_001' | 'user_002'): void {
+function syncPresence(uid: string): void {
+  const user = roomState.users[uid];
+  if (!user) return;
   const activeCount = userSockets.get(uid)?.size ?? 0;
   const isOnline = activeCount > 0;
-  const prev = roomState.users[uid].onlineStatus;
-  roomState.users[uid].onlineStatus = isOnline;
-  roomState.users[uid].lastSeen = new Date().toISOString();
+  const prev = user.onlineStatus;
+  user.onlineStatus = isOnline;
+  user.lastSeen = new Date().toISOString();
   if (prev !== isOnline) {
     saveRoomState(roomState);
-    broadcast({ type: 'PRESENCE_UPDATE', payload: roomState.users });
+    broadcast({ type: 'PRESENCE_UPDATE', payload: getSafeUsersSnapshot() });
   }
 }
 
-function getSafeUsersSnapshot(): Record<'user_001' | 'user_002', RoomUser> {
-  return {
-    user_001: { ...roomState.users.user_001 },
-    user_002: { ...roomState.users.user_002 },
-  };
+function getSafeUsersSnapshot(): Record<string, RoomUser> {
+  const snapshot: Record<string, RoomUser> = {};
+  for (const [uid, user] of Object.entries(roomState.users)) {
+    snapshot[uid] = { ...user };
+  }
+  return snapshot;
+}
+
+function updateDisplayNameEverywhere(uid: string, nextName: string): void {
+  const user = roomState.users[uid];
+  if (!user) return;
+  user.displayName = nextName;
+  if (roomState.krathongs[uid]) {
+    roomState.krathongs[uid].ownerName = nextName;
+  }
+  for (const msg of roomState.messages) {
+    if (msg.senderId === uid) {
+      msg.senderName = nextName;
+    }
+  }
 }
 
 async function startServer(): Promise<void> {
@@ -213,28 +210,98 @@ async function startServer(): Promise<void> {
   app.use(express.json({ limit: '64kb' }));
 
   app.post('/api/auth/login', (req: Request, res: Response) => {
-    const uid = typeof req.body?.uid === 'string' ? req.body.uid.trim() : '';
-    const matched = FIXED_ACCOUNTS.find((acc) => acc.uid === uid);
-
-    if (!matched) {
-      res.status(400).json({ error: 'ไม่พบบัญชีผู้ใช้ที่เลือกในห้องส่วนตัวนี้' });
+    const rawName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
+    if (!rawName) {
+      res.status(400).json({ error: 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ' });
       return;
     }
 
-    const token = signToken(matched.uid);
-    roomState.users[matched.uid].lastSeen = new Date().toISOString();
+    const displayName = rawName.slice(0, 40);
+    const requestedUid =
+      typeof req.body?.uid === 'string' ? req.body.uid.trim() : undefined;
+
+    const now = new Date().toISOString();
+    let targetUid: string | null = null;
+    let isNewOrRenamed = false;
+
+    if (requestedUid && roomState.users[requestedUid]) {
+      const existingUser = roomState.users[requestedUid];
+      const activeConnections = userSockets.get(requestedUid)?.size ?? 0;
+
+      if (activeConnections === 0 || existingUser.displayName === displayName) {
+        // Same user logging back in (either keeping name or changing their name after logout)
+        targetUid = requestedUid;
+        if (existingUser.displayName !== displayName) {
+          updateDisplayNameEverywhere(requestedUid, displayName);
+          isNewOrRenamed = true;
+        }
+      } else {
+        // Another tab in the same browser is actively connected under requestedUid with a different name.
+        // Treat this as a separate user so two-tab testing works seamlessly.
+        const matchingOffline = Object.values(roomState.users).find(
+          (u) => u.uid !== requestedUid && u.displayName === displayName && (userSockets.get(u.uid)?.size ?? 0) === 0,
+        );
+        if (matchingOffline) {
+          targetUid = matchingOffline.uid;
+        }
+      }
+    }
+
+    if (!targetUid) {
+      targetUid = `user_${crypto.randomUUID().slice(0, 8)}`;
+      roomState.users[targetUid] = {
+        uid: targetUid,
+        displayName,
+        role: UserRole.MEMBER,
+        onlineStatus: false,
+        lastSeen: now,
+      };
+      if (!roomState.room.memberUids.includes(targetUid)) {
+        roomState.room.memberUids.push(targetUid);
+      }
+      isNewOrRenamed = true;
+    }
+
+    roomState.users[targetUid].lastSeen = now;
     saveRoomState(roomState);
 
+    if (isNewOrRenamed) {
+      broadcast({ type: 'ROOM_SYNC', payload: roomState });
+    }
+
+    const token = signToken(targetUid);
     res.json({
       token,
-      user: { ...roomState.users[matched.uid] },
+      user: { ...roomState.users[targetUid] },
+    });
+  });
+
+  app.patch('/api/auth/name', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const user = req.authUser!;
+    const rawName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
+    if (!rawName) {
+      res.status(400).json({ error: 'กรุณากรอกชื่อก่อนบันทึก' });
+      return;
+    }
+
+    const displayName = rawName.slice(0, 40);
+    updateDisplayNameEverywhere(user.uid, displayName);
+    roomState.users[user.uid].lastSeen = new Date().toISOString();
+    saveRoomState(roomState);
+    broadcast({ type: 'ROOM_SYNC', payload: roomState });
+
+    res.json({
+      user: { ...roomState.users[user.uid] },
+      state: roomState,
     });
   });
 
   app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const uid = req.authUser!.uid;
-    roomState.users[uid].lastSeen = new Date().toISOString();
-    saveRoomState(roomState);
+    if (roomState.users[uid]) {
+      roomState.users[uid].lastSeen = new Date().toISOString();
+      saveRoomState(roomState);
+    }
     res.json({ ok: true });
   });
 
@@ -251,7 +318,7 @@ async function startServer(): Promise<void> {
 
     if (existing && existing.status === KrathongStatus.FLOATING) {
       res.status(409).json({
-        error: 'กระทงใบนี้ลอยลงสู่แม่น้ำกาแล็กซีแล้ว ไม่สามารถแก้ไขเพิ่มเติมได้',
+        error: `กระทงของ${user.displayName}ลอยลงสู่แม่น้ำกาแล็กซีแล้ว ไม่สามารถแก้ไขเพิ่มเติมได้`,
       });
       return;
     }
@@ -358,10 +425,10 @@ async function startServer(): Promise<void> {
 
     roomState.krathongs[user.uid] = krathong;
 
-    const k1 = roomState.krathongs.user_001;
-    const k2 = roomState.krathongs.user_002;
-    const bothFloating =
-      k1?.status === KrathongStatus.FLOATING && k2?.status === KrathongStatus.FLOATING;
+    const floatingKrathongs = Object.values(roomState.krathongs).filter(
+      (k) => k.status === KrathongStatus.FLOATING,
+    );
+    const bothFloating = floatingKrathongs.length >= 2;
 
     const alreadyHasSharedMoment = roomState.events.some(
       (ev) => ev.eventType === 'SHARED_LOVE_MOMENT',
@@ -404,7 +471,6 @@ async function startServer(): Promise<void> {
     };
 
     roomState.messages.push(chatMessage);
-    // Keep up to 500 most recent messages in storage
     if (roomState.messages.length > 500) {
       roomState.messages = roomState.messages.slice(-500);
     }
@@ -438,22 +504,22 @@ async function startServer(): Promise<void> {
     }
 
     const token = reqUrl.searchParams.get('token') ?? undefined;
-    const account = verifyToken(token);
-    if (!account) {
+    const user = verifyToken(token);
+    if (!user) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, account);
+      wss.emit('connection', ws, user);
     });
   });
 
-  wss.on('connection', (ws: WebSocket, account: ProfileAccount) => {
-    const set = userSockets.get(account.uid)!;
+  wss.on('connection', (ws: WebSocket, user: RoomUser) => {
+    const set = getSocketSet(user.uid);
     set.add(ws);
-    syncPresence(account.uid);
+    syncPresence(user.uid);
 
     const initMsg: WsServerMessage = {
       type: 'ROOM_SYNC',
@@ -468,7 +534,7 @@ async function startServer(): Promise<void> {
           broadcast({
             type: 'TYPING_STATUS',
             payload: {
-              uid: account.uid,
+              uid: user.uid,
               isTyping: Boolean(parsed.payload?.isTyping),
             },
           });
@@ -483,10 +549,10 @@ async function startServer(): Promise<void> {
       if (set.size === 0) {
         broadcast({
           type: 'TYPING_STATUS',
-          payload: { uid: account.uid, isTyping: false },
+          payload: { uid: user.uid, isTyping: false },
         });
       }
-      syncPresence(account.uid);
+      syncPresence(user.uid);
     });
 
     ws.on('error', () => {
@@ -494,10 +560,10 @@ async function startServer(): Promise<void> {
       if (set.size === 0) {
         broadcast({
           type: 'TYPING_STATUS',
-          payload: { uid: account.uid, isTyping: false },
+          payload: { uid: user.uid, isTyping: false },
         });
       }
-      syncPresence(account.uid);
+      syncPresence(user.uid);
     });
   });
 

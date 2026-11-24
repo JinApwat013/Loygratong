@@ -4,9 +4,10 @@ import { ChatMessage, PRIVATE_ROOM_ID, RoomUser } from '../types/universe';
 
 interface ChatViewProps {
   currentUser: RoomUser;
-  partnerUser: RoomUser;
+  partnerUser: RoomUser | undefined;
+  usersMap: Record<string, RoomUser>;
   messages: ChatMessage[];
-  partnerTyping: boolean;
+  typingUserName: string | null;
   onSendMessage: (message: string) => Promise<void>;
   onTypingChange: (isTyping: boolean) => void;
   onBackToRiver: () => void;
@@ -51,8 +52,9 @@ function formatDayDivider(iso: string): string {
 export function ChatView({
   currentUser,
   partnerUser,
+  usersMap,
   messages,
-  partnerTyping,
+  typingUserName,
   onSendMessage,
   onTypingChange,
   onBackToRiver,
@@ -67,10 +69,10 @@ export function ChatView({
   const typingTimerRef = useRef<number | null>(null);
   const isTypingRef = useRef(false);
 
-  // Auto-scroll to latest message whenever messages or partnerTyping changes
+  // Auto-scroll to latest message whenever messages or typingUserName changes
   useEffect(() => {
     bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, partnerTyping]);
+  }, [messages.length, typingUserName]);
 
   // Clear typing indicator on unmount
   useEffect(() => {
@@ -189,20 +191,28 @@ export function ChatView({
               </h1>
             </div>
             <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-              <span>สนทนากับ {partnerUser.displayName}</span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1">
-                <Star
-                  className={`h-3 w-3 ${
-                    partnerUser.onlineStatus
-                      ? 'fill-emerald-400 text-emerald-400'
-                      : 'fill-slate-500 text-slate-500'
-                  }`}
-                />
-                <span className={partnerUser.onlineStatus ? 'text-emerald-300' : 'text-slate-400'}>
-                  {partnerUser.onlineStatus ? 'ออนไลน์' : 'ออฟไลน์'}
-                </span>
-              </span>
+              {partnerUser ? (
+                <>
+                  <span>
+                    {currentUser.displayName} · สนทนากับ {partnerUser.displayName}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="inline-flex items-center gap-1">
+                    <Star
+                      className={`h-3 w-3 ${
+                        partnerUser.onlineStatus
+                          ? 'fill-emerald-400 text-emerald-400'
+                          : 'fill-slate-500 text-slate-500'
+                      }`}
+                    />
+                    <span className={partnerUser.onlineStatus ? 'text-emerald-300' : 'text-slate-400'}>
+                      {partnerUser.onlineStatus ? `${partnerUser.displayName} ออนไลน์` : `${partnerUser.displayName} ออฟไลน์`}
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <span>เข้าใช้งานในนาม {currentUser.displayName} · รออีกคนเข้ามาสนทนา</span>
+              )}
               <span aria-hidden="true" className="hidden sm:inline">
                 ·
               </span>
@@ -230,16 +240,20 @@ export function ChatView({
                 <Heart className="h-6 w-6 text-pink-300" />
               </div>
               <p className="font-display mt-4 text-lg font-medium text-white">
-                ห้องสนทนาของเราสองคนยังว่างอยู่
+                {partnerUser
+                  ? `ห้องสนทนาของ ${currentUser.displayName} และ ${partnerUser.displayName} ยังว่างอยู่`
+                  : `ห้องสนทนาของ ${currentUser.displayName} ยังว่างอยู่`}
               </p>
               <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-slate-400">
-                พื้นที่ส่วนตัวสำหรับ {currentUser.displayName} และ {partnerUser.displayName}{' '}
-                ส่งข้อความทักทายหรือชวนกันไปลอยกระทงได้เลย
+                {partnerUser
+                  ? `พื้นที่ส่วนตัวสำหรับ ${currentUser.displayName} และ ${partnerUser.displayName} ส่งข้อความทักทายหรือชวนกันไปลอยกระทงได้เลย`
+                  : `พื้นที่ส่วนตัวสำหรับ ${currentUser.displayName} พิมพ์ข้อความรอไว้ได้เลย`}
               </p>
             </div>
           ) : (
             messages.map((msg, index) => {
               const isMine = msg.senderId === currentUser.uid;
+              const resolvedSenderName = usersMap[msg.senderId]?.displayName ?? msg.senderName;
               const prevMsg = index > 0 ? messages[index - 1] : null;
               const currDay = formatDayDivider(msg.createdAt);
               const prevDay = prevMsg ? formatDayDivider(prevMsg.createdAt) : '';
@@ -256,7 +270,7 @@ export function ChatView({
                   <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
                     <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-slate-400">
                       <span className={isMine ? 'text-pink-200' : 'text-violet-200'}>
-                        {msg.senderName}
+                        {resolvedSenderName}
                       </span>
                       <span aria-hidden="true">·</span>
                       <span className="font-mono-tabular">{formatMessageTime(msg.createdAt)}</span>
@@ -278,10 +292,10 @@ export function ChatView({
           )}
 
           {/* Real-time Partner Typing Indicator */}
-          {partnerTyping && (
+          {typingUserName && (
             <div className="flex flex-col items-start">
               <div className="rounded-2xl rounded-bl-sm border border-pink-300/20 bg-[#181438]/80 px-4 py-2 text-xs text-pink-200">
-                {partnerUser.displayName} กำลังพิมพ์...
+                {typingUserName} กำลังพิมพ์...
               </div>
             </div>
           )}
@@ -333,7 +347,11 @@ export function ChatView({
               value={draft}
               onChange={(e) => handleDraftChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`พิมพ์ข้อความถึง${partnerUser.displayName}... (กด Enter เพื่อส่ง)`}
+              placeholder={
+                partnerUser
+                  ? `พิมพ์ข้อความถึง${partnerUser.displayName} ในนาม ${currentUser.displayName}... (กด Enter เพื่อส่ง)`
+                  : `พิมพ์ข้อความในนาม ${currentUser.displayName}... (กด Enter เพื่อส่ง)`
+              }
               className="max-h-28 min-h-[44px] flex-1 resize-none rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-slate-400 focus:border-pink-400/60 focus:bg-white/10 focus:outline-none"
             />
 

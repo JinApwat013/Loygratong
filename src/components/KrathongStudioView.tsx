@@ -82,7 +82,7 @@ export function KrathongStudioView({
     setSaving(true);
     try {
       await onSaveDraft(currentPayload);
-      setFeedback('บันทึกกระทงของ' + currentUser.displayName + 'เรียบร้อยแล้ว');
+      setFeedback(`บันทึกกระทงของ${currentUser.displayName}เรียบร้อยแล้ว`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'ไม่สามารถบันทึกกระทงได้');
     } finally {
@@ -146,7 +146,9 @@ export function KrathongStudioView({
           <div className="space-y-6">
             {isFloated && (
               <div className="rounded-xl border border-pink-400/30 bg-pink-500/10 p-4 text-sm text-pink-100">
-                <p className="font-semibold">กระทงของ{currentUser.displayName}ลอยอยู่ในแม่น้ำกาแล็กซีแล้ว</p>
+                <p className="font-semibold">
+                  กระทงของ{currentUser.displayName}ลอยอยู่ในแม่น้ำกาแล็กซีแล้ว
+                </p>
                 <p className="mt-1 text-xs text-pink-200/80">
                   เมื่อกดลอยแล้วจะไม่สามารถแก้ไขรูปแบบหรือคำอธิษฐานได้ เพื่อเก็บเป็นความทรงจำของคืนนี้
                 </p>
@@ -279,7 +281,7 @@ export function KrathongStudioView({
                 disabled={isFloated}
                 value={wishMessage}
                 onChange={(e) => setWishMessage(e.target.value)}
-                placeholder="เขียนคำอธิษฐานสำหรับคืนนี้..."
+                placeholder={`เขียนคำอธิษฐานของ${currentUser.displayName}สำหรับคืนนี้...`}
                 className="mt-2 w-full resize-none rounded-xl border border-white/15 bg-white/5 px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-65"
               />
               <label className="mt-2.5 flex cursor-pointer items-center gap-2.5 text-xs text-slate-300">
@@ -290,7 +292,7 @@ export function KrathongStudioView({
                   onChange={(e) => setShowWish(e.target.checked)}
                   className="h-4 w-4 rounded border-white/25 bg-white/5 text-violet-500 focus:ring-violet-500"
                 />
-                <span>อนุญาตให้แสดงคำอธิษฐานบนแม่น้ำกาแล็กซีให้อีกฝ่ายเห็น</span>
+                <span>แสดงคำอธิษฐานของ{currentUser.displayName}บนแม่น้ำกาแล็กซี</span>
               </label>
             </div>
           </div>
@@ -314,7 +316,7 @@ export function KrathongStudioView({
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-pink-600 px-5 py-3 text-sm font-semibold text-white transition-all hover:from-violet-500 hover:to-pink-500"
               >
                 <Sparkles className="h-4 w-4" />
-                <span>ไปชมกระทงบนแม่น้ำกาแล็กซี</span>
+                <span>ไปชมกระทงของ{currentUser.displayName}บนแม่น้ำกาแล็กซี</span>
               </button>
             ) : (
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -337,7 +339,7 @@ export function KrathongStudioView({
                   ) : (
                     <Send className="h-4 w-4" />
                   )}
-                  <span>ลอยกระทงสู่แม่น้ำ</span>
+                  <span>ลอยกระทงของ{currentUser.displayName}</span>
                 </button>
               </div>
             )}

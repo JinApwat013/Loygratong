@@ -19,7 +19,7 @@ export function SharedLoveOverlay({
   const loveSteps = [
     `ในที่สุดกระทงของ${myName}กับ${partnerName}\nก็ได้ลอยไปด้วยกันแล้วนะ`,
     `ขอบคุณที่มาลอยกระทงด้วยกันนะ ${partnerName}`,
-    `อยากอยู่ด้วยกันกับ${partnerName}ไปนาน ๆ นะ ❤️`,
+    `อยากให้ ${myName} กับ ${partnerName} อยู่ด้วยกันไปนาน ๆ นะ ❤️`,
   ];
 
   useEffect(() => {
