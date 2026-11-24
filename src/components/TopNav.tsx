@@ -2,6 +2,7 @@ import { AppView } from '../types/universe';
 
 interface TopNavProps {
   activeView: AppView;
+  unreadChatCount: number;
   onNavigate: (view: AppView) => void;
   onRequestLogout: () => void;
 }
@@ -10,10 +11,16 @@ const NAV_ITEMS: Array<{ id: AppView; label: string }> = [
   { id: 'dashboard', label: 'หน้าหลัก' },
   { id: 'studio', label: 'สร้างกระทง' },
   { id: 'river', label: 'แม่น้ำกาแล็กซี' },
+  { id: 'chat', label: 'OUR LITTLE CHAT' },
   { id: 'hearts', label: 'สถานะหัวใจ' },
 ];
 
-export function TopNav({ activeView, onNavigate, onRequestLogout }: TopNavProps) {
+export function TopNav({
+  activeView,
+  unreadChatCount,
+  onNavigate,
+  onRequestLogout,
+}: TopNavProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-white/10 bg-[#070714]/90 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-8 px-4 py-3.5 sm:px-6">
@@ -26,10 +33,11 @@ export function TopNav({ activeView, onNavigate, onRequestLogout }: TopNavProps)
           OUR LITTLE UNIVERSE
         </button>
 
-        {/* Zone 2: 4 clean single-line text navigation links */}
+        {/* Zone 2: 5 clean single-line text navigation links */}
         <nav className="hidden items-center gap-6 md:flex" aria-label="เมนูหลัก">
           {NAV_ITEMS.map((item) => {
             const isActive = activeView === item.id;
+            const showUnread = item.id === 'chat' && unreadChatCount > 0;
             return (
               <button
                 key={item.id}
@@ -40,6 +48,11 @@ export function TopNav({ activeView, onNavigate, onRequestLogout }: TopNavProps)
                 }`}
               >
                 {item.label}
+                {showUnread && (
+                  <span className="font-mono-tabular ml-1 text-xs text-pink-300">
+                    ({unreadChatCount})
+                  </span>
+                )}
                 {isActive && (
                   <span
                     aria-hidden="true"
@@ -65,11 +78,12 @@ export function TopNav({ activeView, onNavigate, onRequestLogout }: TopNavProps)
 
       {/* Mobile secondary nav row */}
       <nav
-        className="flex items-center justify-around border-t border-white/10 px-2 py-2 md:hidden"
+        className="flex items-center gap-1 overflow-x-auto border-t border-white/10 px-2 py-2 md:hidden"
         aria-label="เมนูมือถือ"
       >
         {NAV_ITEMS.map((item) => {
           const isActive = activeView === item.id;
+          const showUnread = item.id === 'chat' && unreadChatCount > 0;
           return (
             <button
               key={item.id}
@@ -80,6 +94,7 @@ export function TopNav({ activeView, onNavigate, onRequestLogout }: TopNavProps)
               }`}
             >
               {item.label}
+              {showUnread ? ` (${unreadChatCount})` : ''}
             </button>
           );
         })}

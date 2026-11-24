@@ -200,7 +200,7 @@ export function KrathongPreviewCanvas({ config }: KrathongPreviewCanvasProps) {
       <div className="flex h-full w-full flex-col items-center justify-center rounded-xl border border-white/10 bg-[#0b0920] p-6 text-center">
         <p className="font-display text-lg text-amber-200">ตัวอย่างกระทง 3 มิติ</p>
         <p className="mt-2 text-sm text-slate-400">
-          เบราว์เซอร์ของคุณปิดการเร่งความเร็ว WebGL สามารถตกแต่งและลอยกระทงได้ตามปกติ
+          เบราว์เซอร์นี้ปิดการเร่งความเร็ว WebGL แต่ยังสามารถตกแต่งและลอยกระทงได้ตามปกติ
         </p>
       </div>
     );

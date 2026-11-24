@@ -1,17 +1,41 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Loader2, Lock, User } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowRight, Heart, Loader2, Moon } from 'lucide-react';
 import { motion } from 'motion/react';
+import { getLastSelectedProfileUid } from '../services/roomClient';
 
 interface LoginPageProps {
-  onLogin: (username: string, password: string) => Promise<void>;
+  onSelectProfile: (uid: 'user_001' | 'user_002') => Promise<void>;
 }
 
-export function LoginPage({ onLogin }: LoginPageProps) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+interface ProfileCardOption {
+  uid: 'user_001' | 'user_002';
+  displayName: 'จิน' | 'ชื่อแฟน';
+  subtitle: string;
+  accentClass: string;
+  iconBgClass: string;
+}
+
+const PROFILE_CARDS: readonly ProfileCardOption[] = [
+  {
+    uid: 'user_001',
+    displayName: 'จิน',
+    subtitle: 'เข้าสู่จักรวาลในนาม จิน',
+    accentClass: 'hover:border-violet-400/70 hover:bg-violet-500/15',
+    iconBgClass: 'bg-violet-500/20 text-amber-200 border-violet-300/30',
+  },
+  {
+    uid: 'user_002',
+    displayName: 'ชื่อแฟน',
+    subtitle: 'เข้าสู่จักรวาลในนาม ชื่อแฟน',
+    accentClass: 'hover:border-pink-400/70 hover:bg-pink-500/15',
+    iconBgClass: 'bg-pink-500/20 text-pink-200 border-pink-300/30',
+  },
+];
+
+export function LoginPage({ onSelectProfile }: LoginPageProps) {
+  const [loadingUid, setLoadingUid] = useState<'user_001' | 'user_002' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const lastUid = getLastSelectedProfileUid();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -21,13 +45,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     if (!ctx) return;
 
     let animId = 0;
-    const stars = Array.from({ length: 140 }, () => ({
+    const stars = Array.from({ length: 150 }, () => ({
       x: Math.random(),
       y: Math.random(),
       r: 0.6 + Math.random() * 1.7,
       phase: Math.random() * Math.PI * 2,
       speed: 0.5 + Math.random() * 1.6,
-      hue: Math.random() > 0.7 ? '#fde68a' : Math.random() > 0.4 ? '#c4b5fd' : '#e0f2fe',
+      hue: Math.random() > 0.7 ? '#fde68a' : Math.random() > 0.4 ? '#f9a8d4' : '#c4b5fd',
     }));
 
     const resize = () => {
@@ -63,51 +87,37 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     };
   }, []);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleChoose = async (uid: 'user_001' | 'user_002') => {
+    if (loadingUid) return;
     setErrorMsg(null);
-    if (!username.trim() || !password) {
-      setErrorMsg('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
-      return;
-    }
-
-    setLoading(true);
+    setLoadingUid(uid);
     try {
-      await onLogin(username.trim(), password);
+      await onSelectProfile(uid);
     } catch (err) {
-      setErrorMsg(
-        err instanceof Error && err.message
-          ? err.message
-          : 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง',
-      );
-    } finally {
-      setLoading(false);
+      setErrorMsg(err instanceof Error ? err.message : 'ไม่สามารถเข้าสู่ห้องได้');
+      setLoadingUid(null);
     }
   };
 
   return (
     <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-[#060516] px-4 py-10">
-      {/* Fantasy Galaxy Background Gradients */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_20%_15%,rgba(109,40,217,0.32),transparent_55%),radial-gradient(ellipse_at_80%_25%,rgba(37,99,235,0.26),transparent_50%),radial-gradient(ellipse_at_50%_95%,rgba(76,29,149,0.28),transparent_60%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_20%_15%,rgba(109,40,217,0.34),transparent_55%),radial-gradient(ellipse_at_80%_25%,rgba(37,99,235,0.26),transparent_50%),radial-gradient(ellipse_at_50%_95%,rgba(244,114,182,0.2),transparent_60%)]"
       />
 
-      {/* Animated Starfield Canvas */}
       <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none absolute inset-0" />
 
-      {/* Luminous Galaxy Moon */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute right-[8%] top-[8%] h-32 w-32 rounded-full bg-[radial-gradient(circle_at_35%_35%,#fef9c3_0%,#fde68a_42%,rgba(196,181,253,0.18)_75%,transparent_100%)] shadow-[0_0_90px_rgba(253,230,138,0.35)] sm:h-44 sm:w-44"
       />
 
-      {/* Glassmorphism Login Container */}
       <motion.main
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-        className="relative z-10 w-full max-w-md rounded-2xl border border-white/15 bg-[#0c0922]/70 p-8 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:p-10"
+        className="relative z-10 w-full max-w-2xl rounded-2xl border border-white/15 bg-[#0c0922]/75 p-7 shadow-[0_24px_80px_rgba(0,0,0,0.65)] backdrop-blur-xl sm:p-10"
       >
         <div className="text-center">
           <p className="text-xs font-medium tracking-[0.22em] text-violet-300">
@@ -121,77 +131,71 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             ยินดีต้อนรับสู่จักรวาลของเรา
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-slate-300">
-            พื้นที่เล็ก ๆ ที่มีไว้สำหรับเราสองคนเท่านั้น
+            พื้นที่เล็ก ๆ ที่มีไว้สำหรับเราสองคนเท่านั้น · กดเลือกชื่อเพื่อเข้าสู่ห้องได้ทันที
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-8 space-y-5" noValidate>
-          <div>
-            <label htmlFor="login-username" className="block text-xs font-medium text-slate-300">
-              ชื่อผู้ใช้
-            </label>
-            <div className="relative mt-2">
-              <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                id="login-username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="กรอกชื่อผู้ใช้ของคุณ"
-                disabled={loading}
-                className="w-full rounded-xl border border-white/15 bg-white/5 py-3 pl-10 pr-4 text-sm text-white placeholder-slate-500 transition-colors focus:border-violet-400 focus:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/40"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="login-password" className="block text-xs font-medium text-slate-300">
-              รหัสผ่าน
-            </label>
-            <div className="relative mt-2">
-              <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                id="login-password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="กรอกรหัสผ่าน"
-                disabled={loading}
-                className="w-full rounded-xl border border-white/15 bg-white/5 py-3 pl-10 pr-11 text-sm text-white placeholder-slate-500 transition-colors focus:border-violet-400 focus:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/40"
-              />
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          {PROFILE_CARDS.map((card) => {
+            const isLoading = loadingUid === card.uid;
+            const isRecent = lastUid === card.uid;
+            return (
               <button
+                key={card.uid}
                 type="button"
-                onClick={() => setShowPassword((prev) => !prev)}
-                aria-label={showPassword ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}
-                className="absolute right-2.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+                disabled={Boolean(loadingUid)}
+                onClick={() => handleChoose(card.uid)}
+                className={`group relative flex flex-col items-start justify-between rounded-2xl border border-white/15 bg-white/5 p-6 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-65 ${card.accentClass}`}
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                <div className="flex w-full items-start justify-between gap-3">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-xl border ${card.iconBgClass}`}
+                  >
+                    {card.uid === 'user_001' ? (
+                      <Moon className="h-6 w-6" />
+                    ) : (
+                      <Heart className="h-6 w-6 fill-pink-300/30" />
+                    )}
+                  </div>
+
+                  {isRecent && (
+                    <span className="text-[11px] font-medium text-amber-200">
+                      เลือกไว้ล่าสุด
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-5 w-full">
+                  <p className="font-mono-tabular text-[11px] text-slate-400">{card.uid}</p>
+                  <h2 className="font-display mt-0.5 text-2xl font-semibold text-white">
+                    {card.displayName}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-300">{card.subtitle}</p>
+                </div>
+
+                <div className="mt-6 flex w-full items-center justify-between border-t border-white/10 pt-4 text-xs font-medium text-violet-200">
+                  <span>{isLoading ? 'กำลังเข้าสู่ห้อง...' : 'เข้าสู่จักรวาล'}</span>
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                  )}
+                </div>
               </button>
-            </div>
-          </div>
+            );
+          })}
+        </div>
 
-          {errorMsg && (
-            <div
-              role="alert"
-              className="rounded-xl border border-rose-400/35 bg-rose-500/15 px-4 py-2.5 text-center text-sm text-rose-200"
-            >
-              {errorMsg}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-900/40 transition-all hover:from-violet-500 hover:to-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-65"
+        {errorMsg && (
+          <div
+            role="alert"
+            className="mt-5 rounded-xl border border-rose-400/35 bg-rose-500/15 px-4 py-2.5 text-center text-sm text-rose-200"
           >
-            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            <span>{loading ? 'กำลังเปิดประตูจักรวาล...' : 'เข้าสู่จักรวาลของเรา'}</span>
-          </button>
-        </form>
+            {errorMsg}
+          </div>
+        )}
 
-        <p className="mt-7 border-t border-white/10 pt-5 text-center text-xs tracking-wider text-slate-400">
+        <p className="mt-8 border-t border-white/10 pt-5 text-center text-xs tracking-wider text-slate-400">
           Private Space · Only Two Hearts
         </p>
       </motion.main>

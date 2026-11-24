@@ -12,20 +12,46 @@
     "user_001": {
       "uid": "user_001",
       "username": "jin",
-      "displayName": "เรา",
+      "displayName": "จิน",
       "role": "USER_1",
-      "onlineStatus": false,
-      "lastSeen": "2026-11-24T09:03:32.938Z"
+      "onlineStatus": true,
+      "lastSeen": "2026-11-24T10:27:32.215Z"
     },
     "user_002": {
       "uid": "user_002",
       "username": "love",
-      "displayName": "เธอ",
+      "displayName": "ชื่อแฟน",
       "role": "USER_2",
       "onlineStatus": false,
-      "lastSeen": "2026-11-24T09:03:32.942Z"
+      "lastSeen": "2026-11-24T10:15:20.730Z"
     }
   },
   "krathongs": {},
-  "events": []
+  "events": [],
+  "messages": [
+    {
+      "messageId": "msg_1795515320450_ac44edcf",
+      "roomId": "OUR_LOVE_ROOM_001",
+      "senderId": "user_001",
+      "senderName": "จิน",
+      "message": "คืนนี้ไปลอยกระทงด้วยกันนะ 🌙",
+      "createdAt": "2026-11-24T10:15:20.450Z"
+    },
+    {
+      "messageId": "msg_1795515320455_3d4a9354",
+      "roomId": "OUR_LOVE_ROOM_001",
+      "senderId": "user_002",
+      "senderName": "ชื่อแฟน",
+      "message": "ได้เลย รออยู่ที่แม่น้ำแล้ว ❤️",
+      "createdAt": "2026-11-24T10:15:20.455Z"
+    },
+    {
+      "messageId": "msg_1795515944779_52694ea9",
+      "roomId": "OUR_LOVE_ROOM_001",
+      "senderId": "user_001",
+      "senderName": "จิน",
+      "message": "🥰",
+      "createdAt": "2026-11-24T10:25:44.779Z"
+    }
+  ]
 }

@@ -6,6 +6,7 @@ import express, { NextFunction, Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
+  ChatMessage,
   Krathong,
   KrathongDecoration,
   KrathongDesign,
@@ -15,6 +16,7 @@ import {
   RoomState,
   RoomUser,
   UserRole,
+  WsClientMessage,
   WsServerMessage,
 } from './src/types/universe.ts';
 
@@ -23,27 +25,21 @@ const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'room-state.json');
 const TOKEN_SECRET = process.env.UNIVERSE_SESSION_SECRET || 'our-little-universe-private-room-001';
 
-interface MockCredentialAccount {
+interface ProfileAccount {
   uid: 'user_001' | 'user_002';
-  username: 'jin' | 'love';
-  password: string;
-  displayName: 'เรา' | 'เธอ';
+  displayName: 'จิน' | 'ชื่อแฟน';
   role: UserRole;
 }
 
-const FIXED_ACCOUNTS: readonly MockCredentialAccount[] = [
+const FIXED_ACCOUNTS: readonly ProfileAccount[] = [
   {
     uid: 'user_001',
-    username: 'jin',
-    password: '1234',
-    displayName: 'เรา',
+    displayName: 'จิน',
     role: UserRole.USER_1,
   },
   {
     uid: 'user_002',
-    username: 'love',
-    password: '5678',
-    displayName: 'เธอ',
+    displayName: 'ชื่อแฟน',
     role: UserRole.USER_2,
   },
 ];
@@ -60,16 +56,14 @@ function createInitialRoomState(): RoomState {
     users: {
       user_001: {
         uid: 'user_001',
-        username: 'jin',
-        displayName: 'เรา',
+        displayName: 'จิน',
         role: UserRole.USER_1,
         onlineStatus: false,
         lastSeen: now,
       },
       user_002: {
         uid: 'user_002',
-        username: 'love',
-        displayName: 'เธอ',
+        displayName: 'ชื่อแฟน',
         role: UserRole.USER_2,
         onlineStatus: false,
         lastSeen: now,
@@ -77,6 +71,7 @@ function createInitialRoomState(): RoomState {
     },
     krathongs: {},
     events: [],
+    messages: [],
   };
 }
 
@@ -89,9 +84,25 @@ function loadRoomState(): RoomState {
       const raw = fs.readFileSync(DATA_FILE, 'utf-8');
       const parsed = JSON.parse(raw) as RoomState;
       if (parsed?.room?.roomId === PRIVATE_ROOM_ID && parsed.users?.user_001 && parsed.users?.user_002) {
-        // Reset transient online flags on fresh server boot
+        parsed.users.user_001.displayName = 'จิน';
         parsed.users.user_001.onlineStatus = false;
+        parsed.users.user_002.displayName = 'ชื่อแฟน';
         parsed.users.user_002.onlineStatus = false;
+
+        if (parsed.krathongs?.user_001) {
+          parsed.krathongs.user_001.ownerName = 'จิน';
+        }
+        if (parsed.krathongs?.user_002) {
+          parsed.krathongs.user_002.ownerName = 'ชื่อแฟน';
+        }
+        if (!Array.isArray(parsed.messages)) {
+          parsed.messages = [];
+        } else {
+          parsed.messages = parsed.messages.map((m) => ({
+            ...m,
+            senderName: m.senderId === 'user_001' ? 'จิน' : 'ชื่อแฟน',
+          }));
+        }
         return parsed;
       }
     }
@@ -122,7 +133,7 @@ function signToken(uid: 'user_001' | 'user_002'): string {
   return `${payload}.${sig}`;
 }
 
-function verifyToken(token: string | undefined): MockCredentialAccount | null {
+function verifyToken(token: string | undefined): ProfileAccount | null {
   if (!token) return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
@@ -146,7 +157,7 @@ function verifyToken(token: string | undefined): MockCredentialAccount | null {
 }
 
 interface AuthenticatedRequest extends Request {
-  authUser?: MockCredentialAccount;
+  authUser?: ProfileAccount;
 }
 
 function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
@@ -154,7 +165,7 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined;
   const account = verifyToken(token);
   if (!account) {
-    res.status(401).json({ error: 'ไม่มีสิทธิ์เข้าถึงห้องส่วนตัวนี้ กรุณาเข้าสู่ระบบ' });
+    res.status(401).json({ error: 'กรุณาเลือกบัญชีผู้ใช้ก่อนเข้าสู่ห้องส่วนตัว' });
     return;
   }
   req.authUser = account;
@@ -202,15 +213,11 @@ async function startServer(): Promise<void> {
   app.use(express.json({ limit: '64kb' }));
 
   app.post('/api/auth/login', (req: Request, res: Response) => {
-    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-    const matched = FIXED_ACCOUNTS.find(
-      (acc) => acc.username === username && acc.password === password,
-    );
+    const uid = typeof req.body?.uid === 'string' ? req.body.uid.trim() : '';
+    const matched = FIXED_ACCOUNTS.find((acc) => acc.uid === uid);
 
     if (!matched) {
-      res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+      res.status(400).json({ error: 'ไม่พบบัญชีผู้ใช้ที่เลือกในห้องส่วนตัวนี้' });
       return;
     }
 
@@ -378,6 +385,40 @@ async function startServer(): Promise<void> {
     res.json({ krathong, state: roomState });
   });
 
+  app.post('/api/chat/messages', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const user = req.authUser!;
+    const rawMessage = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+
+    if (!rawMessage) {
+      res.status(400).json({ error: 'กรุณาพิมพ์ข้อความก่อนส่ง' });
+      return;
+    }
+
+    const chatMessage: ChatMessage = {
+      messageId: `msg_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
+      roomId: PRIVATE_ROOM_ID,
+      senderId: user.uid,
+      senderName: user.displayName,
+      message: rawMessage.slice(0, 1000),
+      createdAt: new Date().toISOString(),
+    };
+
+    roomState.messages.push(chatMessage);
+    // Keep up to 500 most recent messages in storage
+    if (roomState.messages.length > 500) {
+      roomState.messages = roomState.messages.slice(-500);
+    }
+
+    saveRoomState(roomState);
+    broadcast({ type: 'CHAT_MESSAGE', payload: chatMessage });
+    broadcast({
+      type: 'TYPING_STATUS',
+      payload: { uid: user.uid, isTyping: false },
+    });
+
+    res.status(201).json({ message: chatMessage });
+  });
+
   app.post('/api/room/reset', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
     roomState.krathongs = {};
     roomState.events = [];
@@ -409,7 +450,7 @@ async function startServer(): Promise<void> {
     });
   });
 
-  wss.on('connection', (ws: WebSocket, account: MockCredentialAccount) => {
+  wss.on('connection', (ws: WebSocket, account: ProfileAccount) => {
     const set = userSockets.get(account.uid)!;
     set.add(ws);
     syncPresence(account.uid);
@@ -420,13 +461,42 @@ async function startServer(): Promise<void> {
     };
     ws.send(JSON.stringify(initMsg));
 
+    ws.on('message', (raw) => {
+      try {
+        const parsed = JSON.parse(String(raw)) as WsClientMessage;
+        if (parsed?.type === 'TYPING') {
+          broadcast({
+            type: 'TYPING_STATUS',
+            payload: {
+              uid: account.uid,
+              isTyping: Boolean(parsed.payload?.isTyping),
+            },
+          });
+        }
+      } catch {
+        // Ignore invalid socket payloads
+      }
+    });
+
     ws.on('close', () => {
       set.delete(ws);
+      if (set.size === 0) {
+        broadcast({
+          type: 'TYPING_STATUS',
+          payload: { uid: account.uid, isTyping: false },
+        });
+      }
       syncPresence(account.uid);
     });
 
     ws.on('error', () => {
       set.delete(ws);
+      if (set.size === 0) {
+        broadcast({
+          type: 'TYPING_STATUS',
+          payload: { uid: account.uid, isTyping: false },
+        });
+      }
       syncPresence(account.uid);
     });
   });

@@ -324,7 +324,7 @@ export function KrathongStudioView({
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-white/10 disabled:opacity-60"
                 >
                   {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span>บันทึกกระทงของฉัน</span>
+                  <span>บันทึกกระทงของ{currentUser.displayName}</span>
                 </button>
                 <button
                   type="button"

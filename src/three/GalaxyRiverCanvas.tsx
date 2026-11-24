@@ -656,7 +656,7 @@ export function GalaxyRiverCanvas({
         <div className="flex h-full w-full flex-col items-center justify-center p-8 text-center">
           <p className="font-display text-2xl text-amber-200">แม่น้ำกาแล็กซี (Shared Galaxy River)</p>
           <p className="mt-2 max-w-md text-sm text-slate-300">
-            ไม่สามารถเริ่มต้น WebGL ในเบราว์เซอร์นี้ได้ แต่คุณยังตรวจสอบข้อมูลกระทงที่ลอยแล้วด้านล่างได้
+            ไม่สามารถเริ่มต้น WebGL ในเบราว์เซอร์นี้ได้ แต่ยังตรวจสอบข้อมูลกระทงที่ลอยแล้วด้านล่างได้
           </p>
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             {floatingList.map((k) => (

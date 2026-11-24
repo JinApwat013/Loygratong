@@ -3,17 +3,24 @@ import { AnimatePresence, motion } from 'motion/react';
 
 interface SharedLoveOverlayProps {
   visible: boolean;
+  myName: string;
+  partnerName: string;
   onDismiss: () => void;
 }
 
-const LOVE_STEPS = [
-  'ในที่สุดกระทงของเราสองคน\nก็ได้ลอยไปด้วยกันแล้วนะ',
-  'ขอบคุณที่มาลอยกระทงด้วยกันนะ',
-  'อยากอยู่ด้วยกันไปนาน ๆ นะ ❤️',
-];
-
-export function SharedLoveOverlay({ visible, onDismiss }: SharedLoveOverlayProps) {
+export function SharedLoveOverlay({
+  visible,
+  myName,
+  partnerName,
+  onDismiss,
+}: SharedLoveOverlayProps) {
   const [step, setStep] = useState(0);
+
+  const loveSteps = [
+    `ในที่สุดกระทงของ${myName}กับ${partnerName}\nก็ได้ลอยไปด้วยกันแล้วนะ`,
+    `ขอบคุณที่มาลอยกระทงด้วยกันนะ ${partnerName}`,
+    `อยากอยู่ด้วยกันกับ${partnerName}ไปนาน ๆ นะ ❤️`,
+  ];
 
   useEffect(() => {
     if (!visible) {
@@ -44,14 +51,14 @@ export function SharedLoveOverlay({ visible, onDismiss }: SharedLoveOverlayProps
         >
           <p className="text-[11px] tracking-[0.2em] text-pink-300">SHARED LOVE MOMENT</p>
           <p className="font-display mt-2 whitespace-pre-line text-xl font-semibold leading-relaxed text-white sm:text-2xl">
-            {LOVE_STEPS[step]}
+            {loveSteps[step]}
           </p>
 
           <div className="mt-4 flex items-center justify-center gap-3">
-            {step < LOVE_STEPS.length - 1 ? (
+            {step < loveSteps.length - 1 ? (
               <button
                 type="button"
-                onClick={() => setStep((s) => Math.min(s + 1, LOVE_STEPS.length - 1))}
+                onClick={() => setStep((s) => Math.min(s + 1, loveSteps.length - 1))}
                 className="text-xs text-pink-200 underline underline-offset-4 hover:text-white"
               >
                 อ่านข้อความถัดไป

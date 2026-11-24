@@ -1,4 +1,4 @@
-import { ArrowRight, Flame, Heart, Star, Wifi, WifiOff } from 'lucide-react';
+import { ArrowRight, Flame, Heart, MessageCircle, Star, Wifi, WifiOff } from 'lucide-react';
 import {
   AppView,
   DESIGN_OPTIONS,
@@ -12,6 +12,7 @@ interface DashboardViewProps {
   currentUser: RoomUser;
   roomState: RoomState;
   wsConnected: boolean;
+  unreadChatCount: number;
   onNavigate: (view: AppView) => void;
 }
 
@@ -19,6 +20,7 @@ export function DashboardView({
   currentUser,
   roomState,
   wsConnected,
+  unreadChatCount,
   onNavigate,
 }: DashboardViewProps) {
   const isUser1 = currentUser.uid === 'user_001';
@@ -37,10 +39,12 @@ export function DashboardView({
     ? DESIGN_OPTIONS.find((d) => d.id === myKrathong.design)?.label ?? 'กลีบบัวดารา'
     : 'ยังไม่ได้สร้าง';
 
-  const greetingTitle = isUser1 ? 'สวัสดี เรา 🌙' : 'สวัสดีนะเธอ ❤️';
-  const greetingSubtitle = isUser1
-    ? 'คืนนี้เธออาจกำลังรอเราอยู่บนแม่น้ำแห่งดวงดาวนะ'
-    : 'คืนนี้มีใครบางคนเตรียมกระทงไว้ลอยกับเธอแล้วนะ';
+  const greetingTitle = isUser1
+    ? `สวัสดี ${me.displayName} 🌙`
+    : `สวัสดี ${me.displayName} ❤️`;
+  const greetingSubtitle = partner.onlineStatus
+    ? `${partner.displayName}เข้ามารอแล้ว · มาลอยกระทงและคุยกันในห้องส่วนตัวได้เลย`
+    : `${me.displayName}กำลังรอ${partner.displayName}อยู่นะ · เตรียมกระทงไว้ลอยด้วยกันคืนนี้`;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
@@ -53,7 +57,7 @@ export function DashboardView({
               <span aria-hidden="true">·</span>
               <span className="font-mono-tabular text-slate-400">{PRIVATE_ROOM_ID}</span>
               <span aria-hidden="true">·</span>
-              <span className="text-slate-300">บัญชี {currentUser.displayName}</span>
+              <span className="text-slate-300">บัญชี {me.displayName}</span>
             </div>
 
             <h1 className="font-display mt-3 text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
@@ -70,10 +74,10 @@ export function DashboardView({
             >
               <span>
                 {myKrathong?.status === KrathongStatus.FLOATING
-                  ? 'ดูกระทงของเรา'
+                  ? `ดูกระทงของ${me.displayName}`
                   : myKrathong
                     ? 'แต่งกระทงต่อ'
-                    : 'สร้างกระทงของฉัน'}
+                    : `สร้างกระทงของ${me.displayName}`}
               </span>
               <ArrowRight className="h-4 w-4" />
             </button>
@@ -83,6 +87,19 @@ export function DashboardView({
               className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-slate-100 transition-colors hover:bg-white/10 whitespace-nowrap"
             >
               <span>ไปยังแม่น้ำกาแล็กซี</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('chat')}
+              className="inline-flex items-center gap-2 rounded-xl border border-pink-400/35 bg-pink-500/15 px-5 py-2.5 text-sm font-medium text-pink-100 transition-colors hover:bg-pink-500/25 whitespace-nowrap"
+            >
+              <MessageCircle className="h-4 w-4 text-pink-300" />
+              <span>แชตกับ{partner.displayName}</span>
+              {unreadChatCount > 0 && (
+                <span className="font-mono-tabular text-xs text-pink-200">
+                  ({unreadChatCount})
+                </span>
+              )}
             </button>
           </div>
         </div>

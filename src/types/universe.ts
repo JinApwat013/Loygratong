@@ -22,15 +22,14 @@ export enum KrathongDecoration {
   MOON_PEARLS = 'moon_pearls',
 }
 
-export type AppView = 'dashboard' | 'studio' | 'river' | 'hearts';
+export type AppView = 'dashboard' | 'studio' | 'river' | 'hearts' | 'chat';
 
 export const PRIVATE_ROOM_ID = 'OUR_LOVE_ROOM_001';
 export const PRIVATE_ROOM_NAME = 'PRIVATE LOVE ROOM · ห้องลอยกระทงของเราสองคน';
 
 export interface RoomUser {
   uid: 'user_001' | 'user_002';
-  username: 'jin' | 'love';
-  displayName: 'เรา' | 'เธอ';
+  displayName: 'จิน' | 'ชื่อแฟน';
   role: UserRole;
   onlineStatus: boolean;
   lastSeen: string;
@@ -39,7 +38,7 @@ export interface RoomUser {
 export interface Krathong {
   krathongId: string;
   ownerUid: 'user_001' | 'user_002';
-  ownerName: 'เรา' | 'เธอ';
+  ownerName: 'จิน' | 'ชื่อแฟน';
   roomId: typeof PRIVATE_ROOM_ID;
   design: KrathongDesign;
   flowerColor: string;
@@ -60,6 +59,15 @@ export interface RoomEvent {
   createdAt: string;
 }
 
+export interface ChatMessage {
+  messageId: string;
+  roomId: typeof PRIVATE_ROOM_ID;
+  senderId: 'user_001' | 'user_002';
+  senderName: 'จิน' | 'ชื่อแฟน';
+  message: string;
+  createdAt: string;
+}
+
 export interface RoomState {
   room: {
     roomId: typeof PRIVATE_ROOM_ID;
@@ -70,6 +78,7 @@ export interface RoomState {
   users: Record<'user_001' | 'user_002', RoomUser>;
   krathongs: Partial<Record<'user_001' | 'user_002', Krathong>>;
   events: RoomEvent[];
+  messages: ChatMessage[];
 }
 
 export interface AuthSession {
@@ -87,7 +96,22 @@ export type WsServerMessage =
       };
     }
   | { type: 'PRESENCE_UPDATE'; payload: RoomState['users'] }
-  | { type: 'ROOM_RESET'; payload: RoomState };
+  | { type: 'ROOM_RESET'; payload: RoomState }
+  | { type: 'CHAT_MESSAGE'; payload: ChatMessage }
+  | {
+      type: 'TYPING_STATUS';
+      payload: {
+        uid: 'user_001' | 'user_002';
+        isTyping: boolean;
+      };
+    };
+
+export type WsClientMessage = {
+  type: 'TYPING';
+  payload: {
+    isTyping: boolean;
+  };
+};
 
 export const DESIGN_OPTIONS: Array<{
   id: KrathongDesign;

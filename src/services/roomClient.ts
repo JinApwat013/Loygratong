@@ -1,18 +1,31 @@
 import {
   AuthSession,
+  ChatMessage,
   Krathong,
   KrathongDecoration,
   KrathongDesign,
   PRIVATE_ROOM_ID,
   RoomState,
+  WsClientMessage,
   WsServerMessage,
 } from '../types/universe';
 
 const TAB_SESSION_KEY = 'olu_tab_session_v1';
+const LS_LAST_PROFILE_KEY = 'olu_last_selected_uid_v1';
 const LS_KRATHONG_PREFIX = 'olu_krathong_';
 const LS_EVENTS_KEY = `olu_events_${PRIVATE_ROOM_ID}`;
+const LS_CHAT_KEY = `olu_chat_messages_${PRIVATE_ROOM_ID}`;
 const LS_SEEN_EVENT_PREFIX = 'olu_seen_love_event_';
 const BROADCAST_CHANNEL_NAME = 'olu_universe_channel_v1';
+
+export function getLastSelectedProfileUid(): 'user_001' | 'user_002' | null {
+  try {
+    const val = localStorage.getItem(LS_LAST_PROFILE_KEY);
+    return val === 'user_001' || val === 'user_002' ? val : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface KrathongDraftPayload {
   design: KrathongDesign;
@@ -68,6 +81,22 @@ export function mirrorStateToLocalStorage(state: RoomState): void {
     }
 
     localStorage.setItem(LS_EVENTS_KEY, JSON.stringify(state.events));
+    if (Array.isArray(state.messages)) {
+      localStorage.setItem(LS_CHAT_KEY, JSON.stringify(state.messages));
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function appendChatMessageToLocalStorage(msg: ChatMessage): void {
+  try {
+    const raw = localStorage.getItem(LS_CHAT_KEY);
+    const list: ChatMessage[] = raw ? (JSON.parse(raw) as ChatMessage[]) : [];
+    if (!list.some((item) => item.messageId === msg.messageId)) {
+      list.push(msg);
+      localStorage.setItem(LS_CHAT_KEY, JSON.stringify(list.slice(-500)));
+    }
   } catch {
     // Ignore storage quota errors
   }
@@ -97,25 +126,29 @@ export function clearSeenLoveEvent(uid: 'user_001' | 'user_002'): void {
   }
 }
 
-export async function loginWithCredentials(
-  username: string,
-  password: string,
+export async function selectProfileLogin(
+  uid: 'user_001' | 'user_002',
 ): Promise<AuthSession> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ uid }),
   });
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data?.error || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+    throw new Error(data?.error || 'ไม่สามารถเข้าสู่บัญชีที่เลือกได้');
   }
   const session: AuthSession = {
     token: data.token,
     user: data.user,
   };
   saveTabSession(session);
+  try {
+    localStorage.setItem(LS_LAST_PROFILE_KEY, uid);
+  } catch {
+    // Ignore storage errors
+  }
   return session;
 }
 
@@ -212,6 +245,25 @@ export async function resetPrivateRoom(token: string): Promise<RoomState> {
   return data.state;
 }
 
+export async function sendChatMessage(token: string, message: string): Promise<ChatMessage> {
+  const res = await fetch('/api/chat/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ message }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || 'ส่งข้อความไม่สำเร็จ');
+  }
+  const chatMessage = data.message as ChatMessage;
+  appendChatMessageToLocalStorage(chatMessage);
+  notifyLocalTabs({ type: 'CHAT_MESSAGE', payload: chatMessage });
+  return chatMessage;
+}
+
 function notifyLocalTabs(message: WsServerMessage): void {
   if (typeof BroadcastChannel === 'undefined') return;
   try {
@@ -228,10 +280,15 @@ export interface RealtimeSubscriptionHandlers {
   onConnectionChange: (connected: boolean) => void;
 }
 
+export interface RealtimeSubscriptionHandle {
+  unsubscribe: () => void;
+  sendTyping: (uid: 'user_001' | 'user_002', isTyping: boolean) => void;
+}
+
 export function subscribeRealtimeRoom(
   token: string,
   handlers: RealtimeSubscriptionHandlers,
-): () => void {
+): RealtimeSubscriptionHandle {
   let closed = false;
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
@@ -270,6 +327,8 @@ export function subscribeRealtimeRoom(
           mirrorStateToLocalStorage(msg.payload);
         } else if (msg.type === 'KRATHONG_FLOATED') {
           mirrorStateToLocalStorage(msg.payload.state);
+        } else if (msg.type === 'CHAT_MESSAGE') {
+          appendChatMessageToLocalStorage(msg.payload);
         }
         handlers.onMessage(msg);
       } catch {
@@ -290,7 +349,22 @@ export function subscribeRealtimeRoom(
 
   connect();
 
-  return () => {
+  const sendTyping = (uid: 'user_001' | 'user_002', isTyping: boolean) => {
+    if (closed) return;
+    const payload: WsClientMessage = {
+      type: 'TYPING',
+      payload: { isTyping },
+    };
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+    }
+    notifyLocalTabs({
+      type: 'TYPING_STATUS',
+      payload: { uid, isTyping },
+    });
+  };
+
+  const unsubscribe = () => {
     closed = true;
     handlers.onConnectionChange(false);
     if (reconnectTimer !== null) {
@@ -304,4 +378,6 @@ export function subscribeRealtimeRoom(
       channel.close();
     }
   };
+
+  return { unsubscribe, sendTyping };
 }
