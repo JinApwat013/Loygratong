@@ -1,0 +1,31 @@
+{
+  "room": {
+    "roomId": "OUR_LOVE_ROOM_001",
+    "roomName": "PRIVATE LOVE ROOM · ห้องลอยกระทงของเราสองคน",
+    "memberUids": [
+      "user_001",
+      "user_002"
+    ],
+    "createdAt": "2026-11-24T09:03:25.128Z"
+  },
+  "users": {
+    "user_001": {
+      "uid": "user_001",
+      "username": "jin",
+      "displayName": "เรา",
+      "role": "USER_1",
+      "onlineStatus": false,
+      "lastSeen": "2026-11-24T09:03:32.938Z"
+    },
+    "user_002": {
+      "uid": "user_002",
+      "username": "love",
+      "displayName": "เธอ",
+      "role": "USER_2",
+      "onlineStatus": false,
+      "lastSeen": "2026-11-24T09:03:32.942Z"
+    }
+  },
+  "krathongs": {},
+  "events": []
+}

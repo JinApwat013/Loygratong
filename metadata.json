@@ -1,0 +1,6 @@
+{
+  "name": "OUR LITTLE UNIVERSE · PRIVATE LOVE ROOM",
+  "description": "ห้องลอยกระทงออนไลน์ส่วนตัวสำหรับเราสองคน ท่ามกลางแม่น้ำแห่งดวงดาวและจักรวาล",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
