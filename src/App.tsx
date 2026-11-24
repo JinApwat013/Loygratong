@@ -10,7 +10,6 @@ import { SharedLoveOverlay } from './components/SharedLoveOverlay';
 import { TopNav } from './components/TopNav';
 import { TwoHeartsView } from './components/TwoHeartsView';
 import {
-  clearTabSession,
   fetchRoomState,
   floatMyKrathong,
   getSavedTabSession,
@@ -195,7 +194,7 @@ export default function App() {
     [checkAndTriggerSharedLove],
   );
 
-  // Hydrate room state & attach real-time listener when authenticated
+  // Hydrate room state & attach real-time listener when logged in
   useEffect(() => {
     if (!session) {
       setBootstrapping(false);
@@ -205,7 +204,7 @@ export default function App() {
     let cancelled = false;
     setBootstrapping(true);
 
-    fetchRoomState(session.token)
+    fetchRoomState(session.user)
       .then((state) => {
         if (cancelled) return;
         const initPresence: Record<string, boolean> = {};
@@ -220,17 +219,10 @@ export default function App() {
         setBootstrapping(false);
 
         realtimeRef.current?.unsubscribe();
-        realtimeRef.current = subscribeRealtimeRoom(session.token, {
+        realtimeRef.current = subscribeRealtimeRoom(session.user, {
           onMessage: handleWsMessage,
           onConnectionChange: setWsConnected,
         });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        clearTabSession();
-        setSession(null);
-        setRoomState(null);
-        setBootstrapping(false);
       });
 
     return () => {
@@ -238,7 +230,7 @@ export default function App() {
       realtimeRef.current?.unsubscribe();
       realtimeRef.current = null;
     };
-  }, [session?.token, session?.user.uid, handleWsMessage, checkAndTriggerSharedLove]);
+  }, [session?.user.uid, session?.user.displayName, handleWsMessage, checkAndTriggerSharedLove]);
 
   // Auto-dismiss arrival toast after 6 seconds
   useEffect(() => {
@@ -247,8 +239,8 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const handleLoginWithName = async (displayName: string) => {
-    const newSession = await loginWithName(displayName);
+  const handleLoginWithName = (displayName: string) => {
+    const newSession = loginWithName(displayName);
     partnerOnlineMapRef.current = {};
     setUnreadChatCount(0);
     setTypingUid(null);
@@ -258,18 +250,16 @@ export default function App() {
 
   const handleRename = async (nextName: string) => {
     if (!session) return;
-    const { user, state } = await updateMyDisplayName(session.token, nextName);
+    const { user, state } = await updateMyDisplayName(session.user, nextName);
     setSession((prev) => (prev ? { ...prev, user } : prev));
     setRoomState(state);
   };
 
-  const handleConfirmLogout = async () => {
+  const handleConfirmLogout = () => {
     setLogoutModalOpen(false);
     realtimeRef.current?.unsubscribe();
     realtimeRef.current = null;
-    if (session) {
-      await logoutSession(session.token);
-    }
+    logoutSession();
     partnerOnlineMapRef.current = {};
     setSession(null);
     setRoomState(null);
@@ -282,13 +272,13 @@ export default function App() {
 
   const handleSaveDraft = async (payload: KrathongDraftPayload) => {
     if (!session) return;
-    const { state } = await saveMyKrathongDraft(session.token, payload);
+    const { state } = await saveMyKrathongDraft(session.user, payload);
     setRoomState(state);
   };
 
   const handleFloatKrathong = async (payload: KrathongDraftPayload) => {
     if (!session) return;
-    const { state } = await floatMyKrathong(session.token, payload);
+    const { state } = await floatMyKrathong(session.user, payload);
     setRoomState(state);
     setActiveView('river');
     checkAndTriggerSharedLove(state, session.user.uid);
@@ -296,7 +286,7 @@ export default function App() {
 
   const handleResetRoom = async () => {
     if (!session || !roomState) return;
-    const nextState = await resetPrivateRoom(session.token, Object.keys(roomState.users));
+    const nextState = await resetPrivateRoom(session.user, Object.keys(roomState.users));
     setRoomState(nextState);
     setShowLoveOverlay(false);
     lastFloatedNotifiedRef.current = null;
@@ -304,7 +294,7 @@ export default function App() {
 
   const handleSendChatMessage = async (message: string) => {
     if (!session) return;
-    const created = await sendChatMessage(session.token, message);
+    const created = await sendChatMessage(session.user, message);
     setRoomState((prev) => {
       if (!prev) return prev;
       if (prev.messages.some((m) => m.messageId === created.messageId)) return prev;

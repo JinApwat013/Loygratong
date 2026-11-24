@@ -1,16 +1,15 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Loader2, Moon, Sparkles } from 'lucide-react';
+import { Moon, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 import { getRememberedProfile } from '../services/roomClient';
 
 interface LoginPageProps {
-  onLogin: (displayName: string) => Promise<void>;
+  onLogin: (displayName: string) => void;
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
   const remembered = getRememberedProfile();
   const [name, setName] = useState<string>(() => remembered?.displayName ?? '');
-  const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -64,10 +63,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     };
   }, []);
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (submitting) return;
-
     const trimmed = name.trim();
     if (!trimmed) {
       setErrorMsg('กรุณากรอกชื่อก่อนเข้าสู่ระบบ');
@@ -76,12 +73,10 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
 
     setErrorMsg(null);
-    setSubmitting(true);
     try {
-      await onLogin(trimmed);
+      onLogin(trimmed);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'ไม่สามารถเข้าสู่ระบบได้');
-      setSubmitting(false);
+      setErrorMsg(err instanceof Error ? err.message : 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ');
     }
   };
 
@@ -143,14 +138,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               type="text"
               maxLength={40}
               autoComplete="name"
-              disabled={submitting}
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
                 if (errorMsg) setErrorMsg(null);
               }}
               placeholder="กรอกชื่อของคุณ..."
-              className="mt-2.5 w-full rounded-xl border border-white/20 bg-white/8 px-4 py-3.5 text-base text-white placeholder-slate-400 shadow-inner transition-all focus:border-pink-400/75 focus:bg-white/12 focus:outline-none focus:ring-2 focus:ring-pink-400/25 disabled:cursor-not-allowed disabled:opacity-65"
+              className="mt-2.5 w-full rounded-xl border border-white/20 bg-white/8 px-4 py-3.5 text-base text-white placeholder-slate-400 shadow-inner transition-all focus:border-pink-400/75 focus:bg-white/12 focus:outline-none focus:ring-2 focus:ring-pink-400/25"
             />
           </div>
 
@@ -165,17 +159,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           <button
             type="submit"
-            disabled={submitting}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-500 px-6 py-3.5 text-base font-semibold text-white shadow-[0_10px_30px_rgba(192,38,211,0.32)] transition-all hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400 disabled:cursor-not-allowed disabled:opacity-65"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-500 px-6 py-3.5 text-base font-semibold text-white shadow-[0_10px_30px_rgba(192,38,211,0.32)] transition-all hover:from-violet-500 hover:via-fuchsia-500 hover:to-pink-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400"
           >
-            {submitting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>กำลังเข้าสู่จักรวาล...</span>
-              </>
-            ) : (
-              <span>เข้าสู่จักรวาลของเรา ❤️</span>
-            )}
+            <span>เข้าสู่จักรวาลของเรา ❤️</span>
           </button>
         </form>
 

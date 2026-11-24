@@ -23,7 +23,6 @@ import {
 const PORT = 3000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'room-state.json');
-const TOKEN_SECRET = process.env.UNIVERSE_SESSION_SECRET || 'our-little-universe-private-room-001';
 
 function createInitialRoomState(): RoomState {
   const now = new Date().toISOString();
@@ -99,53 +98,6 @@ function saveRoomState(state: RoomState): void {
   }
 }
 
-function signToken(uid: string): string {
-  const payload = Buffer.from(
-    JSON.stringify({ uid, roomId: PRIVATE_ROOM_ID, iat: Date.now() }),
-  ).toString('base64url');
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
-  return `${payload}.${sig}`;
-}
-
-function verifyToken(token: string | undefined): RoomUser | null {
-  if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const [payload, sig] = parts;
-  const expectedSig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('base64url');
-  const sigBuf = Buffer.from(sig);
-  const expectedBuf = Buffer.from(expectedSig);
-  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-    return null;
-  }
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8')) as {
-      uid?: string;
-      roomId?: string;
-    };
-    if (decoded.roomId !== PRIVATE_ROOM_ID || !decoded.uid) return null;
-    return roomState.users[decoded.uid] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-interface AuthenticatedRequest extends Request {
-  authUser?: RoomUser;
-}
-
-function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
-  const header = req.headers.authorization;
-  const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined;
-  const user = verifyToken(token);
-  if (!user) {
-    res.status(401).json({ error: 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ' });
-    return;
-  }
-  req.authUser = user;
-  next();
-}
-
 const roomState: RoomState = loadRoomState();
 const userSockets = new Map<string, Set<WebSocket>>();
 
@@ -158,6 +110,14 @@ function getSocketSet(uid: string): Set<WebSocket> {
   return set;
 }
 
+function getSafeUsersSnapshot(): Record<string, RoomUser> {
+  const snapshot: Record<string, RoomUser> = {};
+  for (const [uid, user] of Object.entries(roomState.users)) {
+    snapshot[uid] = { ...user };
+  }
+  return snapshot;
+}
+
 function broadcast(message: WsServerMessage): void {
   const encoded = JSON.stringify(message);
   for (const sockets of userSockets.values()) {
@@ -167,28 +127,6 @@ function broadcast(message: WsServerMessage): void {
       }
     }
   }
-}
-
-function syncPresence(uid: string): void {
-  const user = roomState.users[uid];
-  if (!user) return;
-  const activeCount = userSockets.get(uid)?.size ?? 0;
-  const isOnline = activeCount > 0;
-  const prev = user.onlineStatus;
-  user.onlineStatus = isOnline;
-  user.lastSeen = new Date().toISOString();
-  if (prev !== isOnline) {
-    saveRoomState(roomState);
-    broadcast({ type: 'PRESENCE_UPDATE', payload: getSafeUsersSnapshot() });
-  }
-}
-
-function getSafeUsersSnapshot(): Record<string, RoomUser> {
-  const snapshot: Record<string, RoomUser> = {};
-  for (const [uid, user] of Object.entries(roomState.users)) {
-    snapshot[uid] = { ...user };
-  }
-  return snapshot;
 }
 
 function updateDisplayNameEverywhere(uid: string, nextName: string): void {
@@ -205,78 +143,95 @@ function updateDisplayNameEverywhere(uid: string, nextName: string): void {
   }
 }
 
+function ensureUserRegistered(rawUid: string | undefined, rawName: string | undefined): RoomUser | null {
+  const uid = typeof rawUid === 'string' ? rawUid.trim().slice(0, 64) : '';
+  const displayName = typeof rawName === 'string' ? rawName.trim().slice(0, 40) : '';
+  if (!uid || !/^[a-zA-Z0-9_-]+$/.test(uid)) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const existing = roomState.users[uid];
+
+  if (existing) {
+    if (displayName && existing.displayName !== displayName) {
+      updateDisplayNameEverywhere(uid, displayName);
+    }
+    existing.lastSeen = now;
+    return existing;
+  }
+
+  if (!displayName) {
+    return null;
+  }
+
+  const created: RoomUser = {
+    uid,
+    displayName,
+    role: UserRole.MEMBER,
+    onlineStatus: false,
+    lastSeen: now,
+  };
+  roomState.users[uid] = created;
+  if (!roomState.room.memberUids.includes(uid)) {
+    roomState.room.memberUids.push(uid);
+  }
+  saveRoomState(roomState);
+  broadcast({ type: 'ROOM_SYNC', payload: roomState });
+  return created;
+}
+
+function syncPresence(uid: string): void {
+  const user = roomState.users[uid];
+  if (!user) return;
+  const activeCount = userSockets.get(uid)?.size ?? 0;
+  const isOnline = activeCount > 0;
+  const prev = user.onlineStatus;
+  user.onlineStatus = isOnline;
+  user.lastSeen = new Date().toISOString();
+  if (prev !== isOnline) {
+    saveRoomState(roomState);
+    broadcast({ type: 'PRESENCE_UPDATE', payload: getSafeUsersSnapshot() });
+  }
+}
+
+interface AuthenticatedRequest extends Request {
+  authUser?: RoomUser;
+}
+
+function decodeHeaderValue(val: string | string[] | undefined): string | undefined {
+  if (typeof val !== 'string' || !val.trim()) return undefined;
+  try {
+    return decodeURIComponent(val.trim());
+  } catch {
+    return val.trim();
+  }
+}
+
+function requireRoomUser(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const uid = decodeHeaderValue(req.headers['x-user-id']);
+  const displayName = decodeHeaderValue(req.headers['x-user-name']);
+  const user = ensureUserRegistered(uid, displayName);
+  if (!user) {
+    res.status(400).json({ error: 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ' });
+    return;
+  }
+  req.authUser = user;
+  next();
+}
+
 async function startServer(): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '64kb' }));
 
-  app.post('/api/auth/login', (req: Request, res: Response) => {
-    const rawName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
-    if (!rawName) {
-      res.status(400).json({ error: 'กรุณากรอกชื่อก่อนเข้าสู่ระบบ' });
-      return;
-    }
-
-    const displayName = rawName.slice(0, 40);
-    const requestedUid =
-      typeof req.body?.uid === 'string' ? req.body.uid.trim() : undefined;
-
-    const now = new Date().toISOString();
-    let targetUid: string | null = null;
-    let isNewOrRenamed = false;
-
-    if (requestedUid && roomState.users[requestedUid]) {
-      const existingUser = roomState.users[requestedUid];
-      const activeConnections = userSockets.get(requestedUid)?.size ?? 0;
-
-      if (activeConnections === 0 || existingUser.displayName === displayName) {
-        // Same user logging back in (either keeping name or changing their name after logout)
-        targetUid = requestedUid;
-        if (existingUser.displayName !== displayName) {
-          updateDisplayNameEverywhere(requestedUid, displayName);
-          isNewOrRenamed = true;
-        }
-      } else {
-        // Another tab in the same browser is actively connected under requestedUid with a different name.
-        // Treat this as a separate user so two-tab testing works seamlessly.
-        const matchingOffline = Object.values(roomState.users).find(
-          (u) => u.uid !== requestedUid && u.displayName === displayName && (userSockets.get(u.uid)?.size ?? 0) === 0,
-        );
-        if (matchingOffline) {
-          targetUid = matchingOffline.uid;
-        }
-      }
-    }
-
-    if (!targetUid) {
-      targetUid = `user_${crypto.randomUUID().slice(0, 8)}`;
-      roomState.users[targetUid] = {
-        uid: targetUid,
-        displayName,
-        role: UserRole.MEMBER,
-        onlineStatus: false,
-        lastSeen: now,
-      };
-      if (!roomState.room.memberUids.includes(targetUid)) {
-        roomState.room.memberUids.push(targetUid);
-      }
-      isNewOrRenamed = true;
-    }
-
-    roomState.users[targetUid].lastSeen = now;
-    saveRoomState(roomState);
-
-    if (isNewOrRenamed) {
-      broadcast({ type: 'ROOM_SYNC', payload: roomState });
-    }
-
-    const token = signToken(targetUid);
+  app.get('/api/room', requireRoomUser, (_req: AuthenticatedRequest, res: Response) => {
     res.json({
-      token,
-      user: { ...roomState.users[targetUid] },
+      ...roomState,
+      users: getSafeUsersSnapshot(),
     });
   });
 
-  app.patch('/api/auth/name', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/auth/name', requireRoomUser, (req: AuthenticatedRequest, res: Response) => {
     const user = req.authUser!;
     const rawName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
     if (!rawName) {
@@ -296,23 +251,7 @@ async function startServer(): Promise<void> {
     });
   });
 
-  app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const uid = req.authUser!.uid;
-    if (roomState.users[uid]) {
-      roomState.users[uid].lastSeen = new Date().toISOString();
-      saveRoomState(roomState);
-    }
-    res.json({ ok: true });
-  });
-
-  app.get('/api/room', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
-    res.json({
-      ...roomState,
-      users: getSafeUsersSnapshot(),
-    });
-  });
-
-  app.put('/api/krathong', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.put('/api/krathong', requireRoomUser, (req: AuthenticatedRequest, res: Response) => {
     const user = req.authUser!;
     const existing = roomState.krathongs[user.uid];
 
@@ -370,7 +309,7 @@ async function startServer(): Promise<void> {
     res.json({ krathong, state: roomState });
   });
 
-  app.post('/api/krathong/float', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/krathong/float', requireRoomUser, (req: AuthenticatedRequest, res: Response) => {
     const user = req.authUser!;
     const body = req.body ?? {};
     const existing = roomState.krathongs[user.uid];
@@ -452,7 +391,7 @@ async function startServer(): Promise<void> {
     res.json({ krathong, state: roomState });
   });
 
-  app.post('/api/chat/messages', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/chat/messages', requireRoomUser, (req: AuthenticatedRequest, res: Response) => {
     const user = req.authUser!;
     const rawMessage = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
 
@@ -485,7 +424,7 @@ async function startServer(): Promise<void> {
     res.status(201).json({ message: chatMessage });
   });
 
-  app.post('/api/room/reset', requireAuth, (_req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/room/reset', requireRoomUser, (_req: AuthenticatedRequest, res: Response) => {
     roomState.krathongs = {};
     roomState.events = [];
     saveRoomState(roomState);
@@ -503,10 +442,11 @@ async function startServer(): Promise<void> {
       return;
     }
 
-    const token = reqUrl.searchParams.get('token') ?? undefined;
-    const user = verifyToken(token);
+    const uid = reqUrl.searchParams.get('uid') ?? undefined;
+    const name = reqUrl.searchParams.get('name') ?? undefined;
+    const user = ensureUserRegistered(uid, name);
     if (!user) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
       return;
     }
